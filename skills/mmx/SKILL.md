@@ -5,6 +5,10 @@ description: "Use when a Mermaid .mmd diagram is shared with a human via the mmx
 
 # mmx diagram conversation
 
+If `mmx` is not on your PATH, install it first: follow `INSTALL.md` at the
+repository root (https://github.com/Eastsidegunn/mmx/blob/main/INSTALL.md) —
+it tells you how to probe your environment and install user-locally.
+
 The human and agent edit the same `.mmd` file. `mmx render` writes `<stem>.svg`, `<stem>.diff.json`, and `<stem>.state.json`. The diff is the message for one turn; read it to learn what changed. Node IDs are stable names in the conversation.
 
 ## Turn routine

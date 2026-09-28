@@ -8,6 +8,8 @@ mmx is a Rust CLI for a human and an AI agent to converse by editing the same Me
 cargo install --path .
 ```
 
+Setting up in a different environment, or letting an agent install it for itself? See [INSTALL.md](INSTALL.md).
+
 The CLI uses the pinned `mermaid-rs-renderer` dependency. Keep `mmx` on `PATH` when using hooks.
 
 ## One turn
