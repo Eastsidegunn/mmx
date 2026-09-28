@@ -1,0 +1,5 @@
+flowchart TD
+    A[Request] --> B{Approved?}
+    B -->|Yes| C[Deliver]
+    B -->|No| D[Revise]
+    D --> A
