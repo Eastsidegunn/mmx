@@ -1,0 +1,26 @@
+{
+  "description": "Experimental mmx delivery hooks; copy into a trusted project's .codex/hooks.json to opt in.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 adapters/mmx_hook.py --harness codex --event post"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 adapters/mmx_hook.py --harness codex --event prompt --diagram diagram.mmd"
+          }
+        ]
+      }
+    ]
+  }
+}

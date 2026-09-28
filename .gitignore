@@ -1,0 +1,6 @@
+/target
+/docs
+*.state.json.corrupt
+examples/*.svg
+examples/*.diff.json
+examples/*.state.json
