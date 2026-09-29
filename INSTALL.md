@@ -33,6 +33,11 @@ git clone https://github.com/Eastsidegunn/mmx.git /tmp/mmx-src
 cargo install --path /tmp/mmx-src --locked
 ```
 
+If the clone or a raw-file fetch returns 404 or an authentication prompt, the
+repository may be a private fork or mirror — do not conclude it does not
+exist. Try an authenticated route before giving up: `gh repo clone
+Eastsidegunn/mmx` or `git clone git@github.com:Eastsidegunn/mmx.git`.
+
 This compiles from source (a few minutes) and installs to `~/.cargo/bin/mmx`.
 
 ### Path B — no Rust toolchain, but network access and ~1 GB disk

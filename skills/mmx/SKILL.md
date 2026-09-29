@@ -19,7 +19,7 @@ At the start of **every** turn, run this before editing the diagram:
 mmx render diagram.mmd --by human --print-if-changed
 ```
 
-The command prints the exact new diff JSON only for a non-baseline turn it wrote, including an error turn. Baseline and no-op runs print nothing. Read printed JSON, or the newly written `<stem>.diff.json` when handling exit 2. Replace `diagram.mmd` with the project's configured path.
+The command prints the exact new diff JSON only for a non-baseline turn it wrote, including an error turn. Baseline and no-op runs print nothing; to tell them apart, check `baseline` in `<stem>.diff.json` — `true` means this was the first render (no previous state), `false` with no printed output means nothing changed. Read printed JSON, or the newly written `<stem>.diff.json` when handling exit 2. Replace `diagram.mmd` with the project's configured path.
 
 Immediately after **every** `.mmd` edit, including shell or script edits that hooks may miss, run:
 

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Conversational diagram protocol: humans and agents talk through mermaid diffs"
 license = "MIT"
+repository = "https://github.com/Eastsidegunn/mmx"
+readme = "README.md"
+keywords = ["mermaid", "diagram", "agent", "diff", "cli"]
+categories = ["command-line-utilities", "visualization"]
 
 [dependencies]
 mermaid-rs-renderer = "=0.3.1"
