@@ -295,23 +295,28 @@
       nodeVisuals = {};
       edgeDecor = [];
       var svg = svgslot.querySelector("svg");
-      var sc = scaleOf();
-      if (!svg || !sc || !model) return;
+      if (!svg || !model || !svg.viewBox || !svg.viewBox.baseVal.width) return;
       var vbW = svg.viewBox.baseVal.width, vbH = svg.viewBox.baseVal.height;
+      var svgR = svg.getBoundingClientRect();
+      if (!svgR.width) return;
+      // Measure in screen space and convert back to viewBox units, so
+      // elements positioned via their own transform (mmdr's arrowhead <g>
+      // wrappers) are located correctly.
+      var kx = vbW / svgR.width, ky = vbH / svgR.height;
       Array.prototype.forEach.call(svg.children, function (el) {
         if (el.tagName === "defs") return;
         if (el.hasAttribute("data-edge-id") || el.hasAttribute("data-label-kind")) return;
         if (el.querySelector && el.querySelector("[data-edge-id],[data-label-kind]")) return; // edge container
-        var bb;
-        try { bb = el.getBBox(); } catch (e) { return; }
-        if (bb.width > vbW * 0.9 && bb.height > vbH * 0.9) return; // background
-        // mmdr draws arrowheads as standalone small polygons/paths without
-        // the data-edge-id marker; they belong to edges, not nodes.
-        if ((el.tagName === "polygon" || el.tagName === "path") && bb.width <= 24 && bb.height <= 24) {
-          edgeDecor.push(el);
-          return;
-        }
-        var cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+        var r = el.getBoundingClientRect();
+        if (!r.width && !r.height) return;
+        var bw = r.width * kx, bh = r.height * ky;
+        var cx = (r.left - svgR.left) * kx + bw / 2;
+        var cy = (r.top - svgR.top) * ky + bh / 2;
+        if (bw > vbW * 0.9 && bh > vbH * 0.9) return; // background
+        // Arrowheads: small standalone polygons/paths (often in a <g>
+        // wrapper) without mmdr's data-edge-id marker — edge decoration,
+        // never node visuals.
+        if (bw <= 24 && bh <= 24) { edgeDecor.push(el); return; }
         for (var id in model.nodes) {
           var n = model.nodes[id];
           if (typeof n.x !== "number") continue;
