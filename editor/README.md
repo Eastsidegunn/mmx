@@ -10,7 +10,31 @@ The host wires the callbacks: write it to the `.mmd` file, POST it to a
 server, store it in a database — whatever fits the project. This is what
 makes it embeddable anywhere.
 
-## Use
+## Use — `<mmx-editor>` (standard interface)
+
+```html
+<script src="mmx-editor.js"></script>
+<mmx-editor id="ed"></mmx-editor>
+<script>
+  const ed = document.getElementById("ed");
+  ed.load({svg, nodes, edges, source});   // from `mmx render` + state.json
+  ed.addEventListener("mmx-submit", e => {
+    // e.detail = {source, note, ops} — persist it, run
+    // `mmx render --by human --note ...`, then push the fresh render back:
+    ed.load(newRender);                    // partial update, no page reload
+  });
+  ed.addEventListener("mmx-change", e => {
+    // fires after each committed operation: e.detail = {source, ops}.
+    // A local host with mmx on hand can live-render here (~3 ms).
+  });
+</script>
+```
+
+Works as a plain tag in any framework (React, Vue, Svelte, none). Optional
+`ed.strings = {...}` overrides UI strings — set it before `load()`.
+`ed.getSource()`, `ed.getNote()`, `ed.pendingOps()` are also available.
+
+## Use — low-level `mount()` (when you want callbacks instead of events)
 
 ```html
 <div id="editor"></div>

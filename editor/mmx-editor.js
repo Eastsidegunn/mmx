@@ -462,5 +462,55 @@
     return api;
   }
 
-  return { mount: mount, version: "0.1.0" };
+  // ---- <mmx-editor> custom element (the standard interface) ----
+  // Data flows in through properties/methods, out through DOM events:
+  //   el.load({svg, nodes, edges, source})   partial update, no page reload
+  //   el.addEventListener("mmx-submit", e => e.detail /* {source, note, ops} */)
+  //   el.addEventListener("mmx-change", e => e.detail /* {source, ops} */)
+  //   el.strings = {...}   optional; set before load() (re-mounts if set later)
+  //   el.getSource() / el.getNote() / el.pendingOps()
+  if (typeof HTMLElement !== "undefined" && typeof customElements !== "undefined") {
+    var MmxEditorElement = /** @type {any} */ (function () {
+      function El() { return Reflect.construct(HTMLElement, [], El); }
+      El.prototype = Object.create(HTMLElement.prototype);
+      El.prototype.constructor = El;
+
+      El.prototype._mount = function () {
+        var self = this;
+        this._editor = mount(this, {
+          strings: this._strings,
+          onSubmit: function (r) {
+            self.dispatchEvent(new CustomEvent("mmx-submit", { detail: r, bubbles: true }));
+          },
+          onChange: function (r) {
+            self.dispatchEvent(new CustomEvent("mmx-change", { detail: r, bubbles: true }));
+          },
+        });
+        if (this._lastLoad) this._editor.update(this._lastLoad);
+      };
+      El.prototype.connectedCallback = function () {
+        if (!this._editor) this._mount();
+      };
+      El.prototype.disconnectedCallback = function () {
+        if (this._editor) { this._editor.destroy(); this._editor = null; }
+      };
+      El.prototype.load = function (d) {
+        this._lastLoad = d;
+        if (this._editor) this._editor.update(d);
+      };
+      Object.defineProperty(El.prototype, "strings", {
+        set: function (s) {
+          this._strings = s;
+          if (this._editor) { this._editor.destroy(); this._mount(); }
+        },
+      });
+      El.prototype.getSource = function () { return this._editor ? this._editor.getSource() : ""; };
+      El.prototype.getNote = function () { return this._editor ? this._editor.getNote() : ""; };
+      El.prototype.pendingOps = function () { return this._editor ? this._editor.pendingOps() : 0; };
+      return El;
+    })();
+    if (!customElements.get("mmx-editor")) customElements.define("mmx-editor", MmxEditorElement);
+  }
+
+  return { mount: mount, version: "0.2.0" };
 });
