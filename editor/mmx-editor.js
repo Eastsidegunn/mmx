@@ -132,7 +132,8 @@
     // model.nodes[id] = {label, shape, x?,y?,w?,h?, tx?,ty? (temp), deleted?, modified?, fresh?}
     // model.edges    = [{from, to, label, deleted?, pending?, labelChanged?, origLabel?}]
     var model = null, baseline = null, selected = null, destroyed = false;
-    var manual = false; // temporary-placement mode: svg edges hidden, all edges overlay-drawn
+    var manual = false;
+    var nodeVisuals = null; // id -> [svg elements] (classified lazily) // temporary-placement mode: svg edges hidden, all edges overlay-drawn
 
     function setStatus(m) { statusEl.textContent = m || ""; }
     function idleStatus() { setStatus(manual ? S.manualMode : (opsCount() > 0 ? S.pendingOps(opsCount()) : S.idle)); }
@@ -272,10 +273,54 @@
         });
       });
     }
+    // Assign the SVG's own drawing elements to nodes by geometry, so a drag
+    // can move the real node visuals (mmdr marks edges with data-edge-id and
+    // edge labels with data-label-kind; everything else inside a node's box
+    // belongs to that node).
+    function classifyNodeVisuals() {
+      nodeVisuals = {};
+      var svg = svgslot.querySelector("svg");
+      var sc = scaleOf();
+      if (!svg || !sc || !model) return;
+      var vbW = svg.viewBox.baseVal.width, vbH = svg.viewBox.baseVal.height;
+      Array.prototype.forEach.call(svg.children, function (el) {
+        if (el.tagName === "defs") return;
+        if (el.hasAttribute("data-edge-id") || el.hasAttribute("data-label-kind")) return;
+        if (el.querySelector && el.querySelector("[data-edge-id],[data-label-kind]")) return; // edge container
+        var bb;
+        try { bb = el.getBBox(); } catch (e) { return; }
+        if (bb.width > vbW * 0.9 && bb.height > vbH * 0.9) return; // background
+        var cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+        for (var id in model.nodes) {
+          var n = model.nodes[id];
+          if (typeof n.x !== "number") continue;
+          if (cx >= n.x - 1 && cx <= n.x + n.w + 1 && cy >= n.y - 1 && cy <= n.y + n.h + 1) {
+            (nodeVisuals[id] = nodeVisuals[id] || []).push(el);
+            return;
+          }
+        }
+      });
+    }
+    function moveNodeVisuals(id) {
+      if (!nodeVisuals) classifyNodeVisuals();
+      var n = model.nodes[id], sc = scaleOf();
+      if (!sc) return;
+      var els = (nodeVisuals && nodeVisuals[id]) || [];
+      var dx = (typeof n.tx === "number") ? (n.tx / sc - n.x) : 0;
+      var dy = (typeof n.ty === "number") ? (n.ty / sc - n.y) : 0;
+      els.forEach(function (el) {
+        if (dx || dy) el.setAttribute("transform", "translate(" + dx + " " + dy + ")");
+        else el.removeAttribute("transform");
+      });
+    }
+    function clearNodeTransforms() {
+      if (!nodeVisuals) return;
+      for (var id in nodeVisuals) nodeVisuals[id].forEach(function (el) { el.removeAttribute("transform"); });
+    }
     function setSvgEdgesVisible(v) {
       var svg = svgslot.querySelector("svg");
       if (!svg) return;
-      svg.querySelectorAll("[data-edge-id]").forEach(function (el) {
+      svg.querySelectorAll("[data-edge-id],[data-label-kind]").forEach(function (el) {
         el.style.opacity = v ? "" : "0";
       });
     }
@@ -293,21 +338,13 @@
         var n = model.nodes[id];
         var b = nodeBox(id);
         if (b) {
-          if (typeof n.tx === "number") { // ghost at the original spot
-            var g = document.createElement("div");
-            var s = scaleOf();
-            g.className = "ghost";
-            g.style.left = n.x * s + "px"; g.style.top = n.y * s + "px";
-            g.style.width = n.w * s + "px"; g.style.height = n.h * s + "px";
-            svgbox.appendChild(g);
-          }
           var d = document.createElement("div");
-          d.className = "hit" + (n.deleted ? " deleted" : (n.modified || typeof n.tx === "number") ? " modified" : "") +
+          d.className = "hit" + (n.deleted ? " deleted" : n.modified ? " modified" : "") +
             (id === selected ? " selected" : "");
           d.style.left = b.l + "px"; d.style.top = b.t + "px";
           d.style.width = b.w + "px"; d.style.height = b.h + "px";
           d.dataset.id = id; d.title = id;
-          if (n.modified || n.deleted || typeof n.tx === "number") d.textContent = n.label || id;
+          if (n.modified || n.deleted) d.textContent = n.label || id;
           wireNodePointer(d, id);
           svgbox.appendChild(d);
         } else {
@@ -409,8 +446,7 @@
           n.ty = startBox.t + dy;
           el.style.left = n.tx + "px";
           el.style.top = n.ty + "px";
-          el.classList.add("modified");
-          if (!el.textContent) el.textContent = n.label || id;
+          moveNodeVisuals(id);
           drawOverlayEdges();
         }
         function onUp(uv) {
@@ -612,11 +648,13 @@
       Object.keys(model.nodes).forEach(function (id) {
         delete model.nodes[id].tx; delete model.nodes[id].ty;
       });
+      clearNodeTransforms();
       render(); idleStatus();
     });
     rootEl.querySelector(".revert").addEventListener("click", function () {
       model = deepCopy(baseline.model);
       manual = false; autoBtn.hidden = true;
+      clearNodeTransforms();
       selected = null; render(); announce();
     });
     rootEl.querySelector(".send").addEventListener("click", function () {
@@ -631,7 +669,7 @@
     var api = {
       update: function (d) {
         if (destroyed) return;
-        if (d.svg) svgslot.innerHTML = d.svg;
+        if (d.svg) { svgslot.innerHTML = d.svg; nodeVisuals = null; }
         if (d.nodes && d.edges) {
           model = { nodes: deepCopy(d.nodes), edges: deepCopy(d.edges) };
           var dm = /^\s*flowchart\s+(\w+)/.exec(d.source || "");
