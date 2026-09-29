@@ -137,6 +137,7 @@
     var model = null, baseline = null, selected = null, destroyed = false;
     var manual = false;
     var nodeVisuals = null; // id -> [svg elements] (classified lazily)
+    var edgeDecor = []; // standalone arrowhead polygons (no data-edge-id marker)
     var vz = 1, vx = 0, vy = 0; // camera: zoom + pan (CSS transform on svgbox)
     function applyView() {
       svgbox.style.transform = "translate(" + vx + "px," + vy + "px) scale(" + vz + ")";
@@ -292,6 +293,7 @@
     // belongs to that node).
     function classifyNodeVisuals() {
       nodeVisuals = {};
+      edgeDecor = [];
       var svg = svgslot.querySelector("svg");
       var sc = scaleOf();
       if (!svg || !sc || !model) return;
@@ -303,6 +305,12 @@
         var bb;
         try { bb = el.getBBox(); } catch (e) { return; }
         if (bb.width > vbW * 0.9 && bb.height > vbH * 0.9) return; // background
+        // mmdr draws arrowheads as standalone small polygons/paths without
+        // the data-edge-id marker; they belong to edges, not nodes.
+        if ((el.tagName === "polygon" || el.tagName === "path") && bb.width <= 24 && bb.height <= 24) {
+          edgeDecor.push(el);
+          return;
+        }
         var cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
         for (var id in model.nodes) {
           var n = model.nodes[id];
@@ -333,9 +341,11 @@
     function setSvgEdgesVisible(v) {
       var svg = svgslot.querySelector("svg");
       if (!svg) return;
+      if (!v && !nodeVisuals) classifyNodeVisuals();
       svg.querySelectorAll("[data-edge-id],[data-label-kind]").forEach(function (el) {
         el.style.opacity = v ? "" : "0";
       });
+      edgeDecor.forEach(function (el) { el.style.opacity = v ? "" : "0"; });
     }
 
     // ---- overlay rendering ----
