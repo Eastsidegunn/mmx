@@ -5,8 +5,11 @@ mmx is a Rust CLI for a human and an AI agent to converse by editing the same Me
 ## Install
 
 ```bash
-cargo install --path .
+curl -LsSf https://github.com/Eastsidegunn/mmx/releases/latest/download/mmx-installer.sh | sh
 ```
+
+Prebuilt binaries for macOS, Linux and Windows. Building from source works
+too: `cargo install --path .`
 
 Setting up in a different environment, or letting an agent install it for itself? See [INSTALL.md](INSTALL.md).
 
