@@ -53,8 +53,10 @@
   var CSS = "\n" +
     ":host{all:initial;display:block;font-family:-apple-system,'Apple SD Gothic Neo','Noto Sans KR',sans-serif;font-size:14px;line-height:1.5;color:var(--mmx-ink,#23272E);}\n" +
     "*{box-sizing:border-box;}\n" +
-    ".stage{background:var(--mmx-canvas,#FFFFFF);border:1px solid var(--mmx-border,#E5E2DB);border-radius:10px;padding:16px;overflow:auto;}\n" +
-    ".svgbox{position:relative;width:fit-content;margin:0 auto;touch-action:none;}\n" +
+    ".stage{background:var(--mmx-canvas,#FFFFFF);border:1px solid var(--mmx-border,#E5E2DB);border-radius:10px;padding:8px;}\n" +
+    ".viewport{position:relative;height:var(--mmx-height,clamp(360px,60vh,640px));overflow:hidden;border-radius:6px;touch-action:none;}\n" +
+    ".viewport.panning{cursor:grabbing;}\n" +
+    ".svgbox{position:absolute;left:0;top:0;width:fit-content;transform-origin:0 0;}\n" +
     ".svgbox svg{display:block;max-width:100%;height:auto;}\n" +
     ".hit{position:absolute;border:1.5px dashed transparent;border-radius:8px;cursor:grab;display:flex;align-items:center;justify-content:center;text-align:center;font-size:12.5px;line-height:1.3;padding:2px;color:#23272E;user-select:none;}\n" +
     ".hit:hover{border-color:var(--mmx-select,#2563EB);}\n" +
@@ -104,7 +106,7 @@
     var rootEl = document.createElement("div");
     rootEl.innerHTML =
       '<div class="stage">' +
-      '  <div class="svgbox"><div class="svgslot"></div></div>' +
+      '  <div class="viewport"><div class="svgbox"><div class="svgslot"></div></div></div>' +
       '  <div class="staging"></div>' +
       "</div>" +
       '<div class="bar">' +
@@ -117,6 +119,7 @@
       '<div class="status"></div>';
     shadow.appendChild(rootEl);
 
+    var viewport = rootEl.querySelector(".viewport");
     var svgbox = rootEl.querySelector(".svgbox");
     var svgslot = rootEl.querySelector(".svgslot");
     var staging = rootEl.querySelector(".staging");
@@ -133,7 +136,17 @@
     // model.edges    = [{from, to, label, deleted?, pending?, labelChanged?, origLabel?}]
     var model = null, baseline = null, selected = null, destroyed = false;
     var manual = false;
-    var nodeVisuals = null; // id -> [svg elements] (classified lazily) // temporary-placement mode: svg edges hidden, all edges overlay-drawn
+    var nodeVisuals = null; // id -> [svg elements] (classified lazily)
+    var vz = 1, vx = 0, vy = 0; // camera: zoom + pan (CSS transform on svgbox)
+    function applyView() {
+      svgbox.style.transform = "translate(" + vx + "px," + vy + "px) scale(" + vz + ")";
+    }
+    function fitView() {
+      vz = 1;
+      vx = Math.max((viewport.clientWidth - svgbox.offsetWidth) / 2, 8);
+      vy = 12;
+      applyView();
+    } // temporary-placement mode: svg edges hidden, all edges overlay-drawn
 
     function setStatus(m) { statusEl.textContent = m || ""; }
     function idleStatus() { setStatus(manual ? S.manualMode : (opsCount() > 0 ? S.pendingOps(opsCount()) : S.idle)); }
@@ -207,7 +220,7 @@
     }
     function localPoint(ev) {
       var r = svgbox.getBoundingClientRect();
-      return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      return { x: (ev.clientX - r.left) / vz, y: (ev.clientY - r.top) / vz };
     }
     function nodeAtPoint(p) {
       var found = null;
@@ -372,11 +385,10 @@
       var list = overlayEdgeList();
       if (!list.length) return;
       var NS = "http://www.w3.org/2000/svg";
-      var box = svgbox.getBoundingClientRect();
       var ov = document.createElementNS(NS, "svg");
       ov.setAttribute("class", "overlaylines");
-      ov.setAttribute("width", box.width);
-      ov.setAttribute("height", svgbox.scrollHeight || box.height);
+      ov.setAttribute("width", svgbox.offsetWidth);
+      ov.setAttribute("height", svgbox.scrollHeight || svgbox.offsetHeight);
       ov.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:20;overflow:visible";
       var accent = getComputedStyle(container).getPropertyValue("--mmx-accent").trim() || "#B04A17";
       var ink = manual ? "#5B6470" : accent;
@@ -432,7 +444,7 @@
         el.setPointerCapture && el.setPointerCapture(pid);
         function onMove(mv) {
           if (mv.pointerId !== pid) return;
-          var dx = mv.clientX - start.x, dy = mv.clientY - start.y;
+          var dx = (mv.clientX - start.x) / vz, dy = (mv.clientY - start.y) / vz;
           if (!moved && Math.abs(dx) < DRAG_MIN && Math.abs(dy) < DRAG_MIN) return;
           if (!isPlaced) return; // staged nodes are not draggable
           if (!moved) {
@@ -484,10 +496,9 @@
       clearFloat();
       var NS = "http://www.w3.org/2000/svg";
       var accent = getComputedStyle(container).getPropertyValue("--mmx-accent").trim() || "#B04A17";
-      var box = svgbox.getBoundingClientRect();
       var band = document.createElementNS(NS, "svg");
-      band.setAttribute("width", box.width);
-      band.setAttribute("height", svgbox.scrollHeight || box.height);
+      band.setAttribute("width", svgbox.offsetWidth);
+      band.setAttribute("height", svgbox.scrollHeight || svgbox.offsetHeight);
       band.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:29;overflow:visible";
       var ln = document.createElementNS(NS, "line");
       var a = centerOf(fromId);
@@ -628,6 +639,45 @@
       if (focusLabel) li.focus();
     }
 
+    // ---- pan & zoom ----
+    viewport.addEventListener("wheel", function (ev) {
+      ev.preventDefault();
+      var r = viewport.getBoundingClientRect();
+      var px = ev.clientX - r.left, py = ev.clientY - r.top;
+      var nz = Math.min(4, Math.max(0.2, vz * Math.exp(-ev.deltaY * 0.0015)));
+      vx = px - (px - vx) * (nz / vz);
+      vy = py - (py - vy) * (nz / vz);
+      vz = nz;
+      applyView();
+    }, { passive: false });
+    viewport.addEventListener("pointerdown", function (ev) {
+      // reaches here only for background presses (nodes/handles/menus stop propagation)
+      if (ev.button !== 0 && ev.button !== 1) return;
+      if (ev.button === 1) ev.preventDefault();
+      var sx = ev.clientX, sy = ev.clientY, bx = vx, by = vy, pid = ev.pointerId, panning = false;
+      function onMove(mv) {
+        if (mv.pointerId !== pid) return;
+        var dx = mv.clientX - sx, dy = mv.clientY - sy;
+        if (!panning && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+        panning = true;
+        viewport.classList.add("panning");
+        vx = bx + dx; vy = by + dy;
+        applyView();
+      }
+      function onUp(uv) {
+        if (uv.pointerId !== pid) return;
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        viewport.classList.remove("panning");
+      }
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    });
+    viewport.addEventListener("dblclick", function (ev) {
+      if (ev.target.closest && ev.target.closest(".hit,.menu,.inline,.handle")) return;
+      fitView();
+    });
+
     // ---- outside click / global controls ----
     rootEl.addEventListener("click", function () {
       clearFloat(); selected = null;
@@ -680,6 +730,7 @@
         }
         wireSvgEdgeTargets();
         render();
+        if (d.svg) fitView();
         idleStatus();
       },
       getSource: serialize,
