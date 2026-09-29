@@ -92,13 +92,20 @@
   function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
 
   function quoteLabel(l) {
+    l = l.replace(/[\r\n]+/g, " ").trim();
     return /[\[\]{}()|"<>#;]/.test(l) ? '"' + l.replace(/"/g, "'") + '"' : l;
+  }
+  function edgeLabel(l) {
+    // '|' and newlines would change the mermaid parse; drop them.
+    return l.replace(/[|\r\n]+/g, " ").trim();
   }
 
   function mount(container, opts) {
     opts = opts || {};
     var S = Object.assign({}, DEFAULT_STRINGS, opts.strings || {});
-    var shadow = container.attachShadow ? container.attachShadow({ mode: "open" }) : container;
+    var host = document.createElement("div");
+    container.appendChild(host);
+    var shadow = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
     var style = document.createElement("style");
     style.textContent = CSS;
     shadow.appendChild(style);
@@ -159,11 +166,12 @@
     }
     function serialize() {
       if (!model) return "";
-      var lines = ["flowchart TD"], seen = {};
+      var lines = ["flowchart " + (model.dir || "TD")], seen = {};
       function ref(id) { if (seen[id]) return id; seen[id] = true; return decl(id); }
       model.edges.forEach(function (e) {
         if (e.deleted || !alive(e.from) || !alive(e.to)) return;
-        lines.push("    " + ref(e.from) + " " + (e.label ? "-->|" + e.label + "|" : "-->") + " " + ref(e.to));
+        var l = e.label ? edgeLabel(e.label) : "";
+        lines.push("    " + ref(e.from) + " " + (l ? "-->|" + l + "|" : "-->") + " " + ref(e.to));
       });
       Object.keys(model.nodes).forEach(function (id) {
         if (alive(id) && !seen[id]) lines.push("    " + decl(id));
@@ -319,9 +327,10 @@
         done();
       }
       function done() { clearFloat(); render(); announce(); }
+      function cancel() { clearFloat(); render(); setStatus(opsCount() > 0 ? S.pendingOps(opsCount()) : S.idle); }
       inp.addEventListener("keydown", function (ev) {
         if (ev.key === "Enter") { ev.preventDefault(); commit(); }
-        if (ev.key === "Escape") { ev.preventDefault(); done(); }
+        if (ev.key === "Escape") { ev.preventDefault(); cancel(); }
       });
 
       var tb = document.createElement("div");
@@ -372,8 +381,12 @@
         li.value = e.label || "";
         li.placeholder = S.label;
         li.addEventListener("change", function () {
+          if (!e.pending && !("origLabel" in e)) e.origLabel = e.label;
           e.label = li.value.trim() || null;
-          if (!e.pending) e.labelChanged = true;
+          if (!e.pending) {
+            if (e.label === e.origLabel) delete e.labelChanged;
+            else e.labelChanged = true;
+          }
           drawPendingEdges(); announce();
         });
         row.appendChild(li);
@@ -428,6 +441,8 @@
         if (d.svg) svgslot.innerHTML = d.svg;
         if (d.nodes && d.edges) {
           model = { nodes: deepCopy(d.nodes), edges: deepCopy(d.edges) };
+          var dm = /^\s*flowchart\s+(\w+)/.exec(d.source || "");
+          model.dir = dm ? dm[1] : "TD";
           baseline = { model: deepCopy(model), nodes: deepCopy(d.nodes), source: d.source || "" };
           selected = null; linking = null;
         }
@@ -440,8 +455,7 @@
       destroy: function () {
         destroyed = true;
         window.removeEventListener("resize", onResize);
-        if (shadow === container) container.innerHTML = "";
-        else { style.remove(); rootEl.remove(); }
+        host.remove();
       },
     };
     api.update(opts);
