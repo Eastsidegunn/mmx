@@ -1,6 +1,6 @@
 ---
 name: mmx
-description: "Use when a Mermaid .mmd diagram is shared with a human via the mmx CLI: run mmx render each turn, read diff.json as the human's message, fix exit-2 parse errors."
+description: "Use when a Mermaid .mmd diagram is shared with a human via the mmx CLI — including when DISPLAYING or publishing that diagram (artifact, web page): run mmx render each turn, read diff.json as the human's message, fix exit-2 parse errors, and show only mmx-rendered SVG, never a different mermaid renderer."
 ---
 
 # mmx diagram conversation
@@ -40,6 +40,21 @@ When hooks are installed, notes for Edit/Write edits are not recorded because th
 - `by` says who invoked the render, not a proven author of every edit.
 
 See [diff-schema.md](references/diff-schema.md) for all diff and state fields.
+
+## Showing the diagram (one renderer, one picture)
+
+When you display this diagram to the human — in an artifact, a web page, a
+report — use the SVG that `mmx render` produced (`<stem>.svg`). Do NOT
+re-render the same source with a different mermaid renderer (a native
+```mermaid fence, mermaid.js, mermaid-cli): layouts differ between renderers,
+so the human would see a different picture than the one this conversation's
+diffs and coordinates describe. If the surrounding environment offers native
+mermaid rendering, still prefer embedding mmx's SVG.
+
+If the human should EDIT the diagram visually, embed the repo's
+`editor/mmx-editor.js` (`<mmx-editor>` web component; zero dependencies):
+feed it `{svg, nodes, edges, source}` from the render outputs and handle its
+`mmx-submit` event. See `editor/README.md`.
 
 ## Recover errors
 
