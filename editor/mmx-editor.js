@@ -212,6 +212,34 @@
       }
       return null;
     }
+    function boundsOf(id) {
+      var b = nodeBox(id);
+      if (b) return { cx: b.l + b.w / 2, cy: b.t + b.h / 2, hw: b.w / 2, hh: b.h / 2 };
+      var el = staging.querySelector('[data-id="' + id + '"]');
+      if (el) {
+        var r = el.getBoundingClientRect(), br = svgbox.getBoundingClientRect();
+        var w = r.width / vz, h = r.height / vz;
+        return { cx: (r.left - br.left) / vz + w / 2, cy: (r.top - br.top) / vz + h / 2, hw: w / 2, hh: h / 2 };
+      }
+      return null;
+    }
+    // Trim a center-to-center segment so it starts and ends on the node
+    // rectangles' borders instead of plunging into the bodies.
+    function exitT(bounds, dx, dy) {
+      var tx = dx ? bounds.hw / Math.abs(dx) : Infinity;
+      var ty = dy ? bounds.hh / Math.abs(dy) : Infinity;
+      return Math.min(tx, ty);
+    }
+    function clipSegment(A, B) {
+      var dx = B.cx - A.cx, dy = B.cy - A.cy;
+      if (!dx && !dy) return null;
+      var tA = exitT(A, dx, dy), tB = exitT(B, dx, dy);
+      if (tA + tB >= 1) return { x1: A.cx, y1: A.cy, x2: B.cx, y2: B.cy }; // overlapping nodes
+      return {
+        x1: A.cx + dx * tA, y1: A.cy + dy * tA,
+        x2: B.cx - dx * tB, y2: B.cy - dy * tB,
+      };
+    }
     function boxRectOf(id) {
       var el = svgbox.querySelector('.hit[data-id="' + id + '"]');
       if (el) return { left: el.offsetLeft, top: el.offsetTop, width: el.offsetWidth, height: el.offsetHeight, host: svgbox };
@@ -414,12 +442,14 @@
         '<marker id="' + mid + 'p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="' + accent + '"/></marker>';
       ov.appendChild(defs);
       list.forEach(function (e) {
-        var a = centerOf(e.from), b = centerOf(e.to);
-        if (!a || !b) return;
+        var A = boundsOf(e.from), B = boundsOf(e.to);
+        if (!A || !B) return;
+        var seg = clipSegment(A, B);
+        if (!seg) return;
         var stroke = e.pending ? accent : ink;
         var ln = document.createElementNS(NS, "line");
-        ln.setAttribute("x1", a.x); ln.setAttribute("y1", a.y);
-        ln.setAttribute("x2", b.x); ln.setAttribute("y2", b.y);
+        ln.setAttribute("x1", seg.x1); ln.setAttribute("y1", seg.y1);
+        ln.setAttribute("x2", seg.x2); ln.setAttribute("y2", seg.y2);
         ln.setAttribute("stroke", stroke); ln.setAttribute("stroke-width", "2");
         if (e.pending) ln.setAttribute("stroke-dasharray", "6 4");
         ln.setAttribute("marker-end", "url(#" + mid + (e.pending ? "p" : "") + ")");
@@ -435,7 +465,7 @@
         ov.appendChild(ln);
         if (e.label) {
           var t = document.createElementNS(NS, "text");
-          t.setAttribute("x", (a.x + b.x) / 2); t.setAttribute("y", (a.y + b.y) / 2 - 5);
+          t.setAttribute("x", (seg.x1 + seg.x2) / 2); t.setAttribute("y", (seg.y1 + seg.y2) / 2 - 5);
           t.setAttribute("fill", stroke); t.setAttribute("font-size", "11");
           t.setAttribute("text-anchor", "middle");
           t.textContent = e.label;
@@ -517,6 +547,7 @@
       band.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:29;overflow:visible";
       var ln = document.createElementNS(NS, "line");
       var a = centerOf(fromId);
+      var fromB = boundsOf(fromId);
       ln.setAttribute("x1", a.x); ln.setAttribute("y1", a.y);
       ln.setAttribute("x2", a.x); ln.setAttribute("y2", a.y);
       ln.setAttribute("stroke", accent); ln.setAttribute("stroke-width", "2");
@@ -527,6 +558,10 @@
       function onMove(mv) {
         if (mv.pointerId !== pid) return;
         var p = localPoint(mv);
+        if (fromB) {
+          var seg = clipSegment(fromB, { cx: p.x, cy: p.y, hw: 0, hh: 0 });
+          if (seg) { ln.setAttribute("x1", seg.x1); ln.setAttribute("y1", seg.y1); }
+        }
         ln.setAttribute("x2", p.x); ln.setAttribute("y2", p.y);
       }
       function onUp(uv) {
