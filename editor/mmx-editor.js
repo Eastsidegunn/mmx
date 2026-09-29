@@ -2,29 +2,26 @@
  * mmx-editor — in-place diagram editing component for mmx.
  *
  * Editing only, by design: the module renders an mmx-produced SVG, lets the
- * user manipulate the visible flowchart (rename, delete, connect, add nodes),
- * and hands the result back as mermaid text through callbacks. Where that
- * text goes — a file, a server, an artifact store — is the host's business.
+ * user manipulate the visible flowchart (rename, delete, connect, add, and
+ * temporarily rearrange nodes), and hands the result back as mermaid text.
+ * Where that text goes — a file, a server, an artifact store — is the host's
+ * business.
  *
- * const editor = MmxEditor.mount(container, {
- *   svg,            // string: the rendered SVG (from `mmx render`)
- *   nodes,          // {id: {label, shape, x, y, w, h}} (from state.json)
- *   edges,          // [{from, to, label}]              (from state.json)
- *   source,         // string: the mermaid source of that render
- *   onSubmit(r) {}, // user pressed send: r = {source, note, ops}
- *   onChange(r) {}, // after each committed operation: r = {source, ops}
- *   strings,        // optional UI-string overrides (see DEFAULT_STRINGS)
- * });
- * editor.update({svg, nodes, edges, source})  // new confirmed turn from host
- * editor.getSource()                          // serialize current edits
- * editor.pendingOps()                         // count of unsent operations
- * editor.destroy()
+ * Standard interface: the <mmx-editor> custom element (see bottom).
+ * Low-level: MmxEditor.mount(container, opts) with onSubmit/onChange callbacks.
  *
- * No dependencies. Styles are isolated in shadow DOM; hosts can theme via
- * CSS custom properties on the container (--mmx-accent, --mmx-surface, ...).
- * Serialization targets the flowchart subset (node shapes Rectangle/Diamond,
- * labeled edges); comments and style directives of the original source are
- * not preserved in direct-manipulation mode.
+ * Interaction model:
+ *  - click a node or an edge  -> small menu (edit / delete)
+ *  - drag the ring handle     -> rubber-band connect to another node
+ *  - drag a node body         -> temporary placement (thinking aid only:
+ *    positions are never serialized; a send or a new load snaps back to
+ *    the renderer's layout)
+ *
+ * No dependencies. Styles are isolated in shadow DOM; theme via CSS custom
+ * properties on the host element (--mmx-accent, --mmx-select, ...).
+ * Serialization targets the flowchart subset; labels are normalized
+ * (newlines to spaces, '"' -> "'", '|' dropped in edge labels). Feed it
+ * trusted SVG only (mmx render output) — the svg string is injected as-is.
  */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -36,17 +33,16 @@
     addNode: "+ node",
     send: "Send",
     revert: "Revert",
+    autoLayout: "auto layout",
     notePlaceholder: "Say a word (recorded as --note)",
-    apply: "✓ apply",
-    connect: "connect →",
-    edges: "edges",
-    remove: "delete",
-    restore: "restore",
+    menuEdit: "✎ edit",
+    menuDelete: "✕ delete",
+    menuLabel: "label",
+    apply: "✓",
     label: "label",
-    noEdges: "no connected edges",
     pendingOps: function (n) { return n + " pending operation(s)"; },
-    idle: "Click a node to edit it in place",
-    connectFrom: function (id) { return id + ": click a target node to connect"; },
+    idle: "Click a node or an arrow; drag the ● handle to connect; drag a node to rearrange (temporary)",
+    manualMode: "Manual placement (temporary) — send or a new turn snaps back to auto layout",
     connected: function (a, b) { return a + " → " + b + " connected"; },
     deleted: function (id) { return id + " deleted — click again to undo"; },
     nothingToSend: "Nothing changed yet",
@@ -58,35 +54,30 @@
     ":host{all:initial;display:block;font-family:-apple-system,'Apple SD Gothic Neo','Noto Sans KR',sans-serif;font-size:14px;line-height:1.5;color:var(--mmx-ink,#23272E);}\n" +
     "*{box-sizing:border-box;}\n" +
     ".stage{background:var(--mmx-canvas,#FFFFFF);border:1px solid var(--mmx-border,#E5E2DB);border-radius:10px;padding:16px;overflow:auto;}\n" +
-    ".svgbox{position:relative;width:fit-content;margin:0 auto;}\n" +
+    ".svgbox{position:relative;width:fit-content;margin:0 auto;touch-action:none;}\n" +
     ".svgbox svg{display:block;max-width:100%;height:auto;}\n" +
-    ".hit{position:absolute;border:1.5px dashed transparent;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;text-align:center;font-size:12.5px;line-height:1.3;padding:2px;color:#23272E;}\n" +
+    ".hit{position:absolute;border:1.5px dashed transparent;border-radius:8px;cursor:grab;display:flex;align-items:center;justify-content:center;text-align:center;font-size:12.5px;line-height:1.3;padding:2px;color:#23272E;user-select:none;}\n" +
     ".hit:hover{border-color:var(--mmx-select,#2563EB);}\n" +
     ".hit.selected{border-style:solid;border-color:var(--mmx-select,#2563EB);}\n" +
-    ".hit.modified{background:#FFFFFF;border:1.5px solid var(--mmx-accent,#B04A17);}\n" +
+    ".hit.modified,.hit.moved{background:#FFFFFF;border:1.5px solid var(--mmx-accent,#B04A17);}\n" +
     ".hit.deleted{background:rgba(120,120,120,.75);border:1.5px solid #888;color:#fff;text-decoration:line-through;}\n" +
-    ".hit.linksrc{border:2px solid var(--mmx-accent,#B04A17);}\n" +
+    ".hit.dragging{cursor:grabbing;opacity:.85;z-index:25;}\n" +
+    ".ghost{position:absolute;border-radius:8px;background:var(--mmx-canvas,#FFFFFF);opacity:.82;z-index:5;}\n" +
+    ".handle{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--mmx-accent,#B04A17);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);cursor:crosshair;z-index:28;}\n" +
+    ".menu{position:absolute;z-index:31;display:flex;gap:2px;background:var(--mmx-surface,#FFFFFF);border:1px solid var(--mmx-border,#E5E2DB);border-radius:8px;padding:3px 4px;box-shadow:0 2px 10px rgba(0,0,0,.15);}\n" +
+    ".menu button{background:transparent;color:var(--mmx-ink,#23272E);border:none;padding:4px 10px;font-size:12.5px;border-radius:6px;cursor:pointer;white-space:nowrap;font-weight:500;font-family:inherit;}\n" +
+    ".menu button:hover{background:rgba(127,127,127,.15);}\n" +
+    ".menu button.danger{color:#C0392B;}\n" +
+    ".menu input{width:110px;border:1px solid var(--mmx-border,#E5E2DB);border-radius:6px;padding:3px 7px;font-size:12.5px;background:var(--mmx-surface,#FFFFFF);color:var(--mmx-ink,#23272E);font-family:inherit;}\n" +
     ".inline{position:absolute;z-index:30;border:2px solid var(--mmx-select,#2563EB);border-radius:8px;background:#FFFFFF;color:#23272E;font-size:12.5px;text-align:center;padding:2px 4px;outline:none;font-family:inherit;}\n" +
-    ".toolbar{position:absolute;z-index:31;display:flex;gap:4px;background:var(--mmx-surface,#FFFFFF);border:1px solid var(--mmx-border,#E5E2DB);border-radius:8px;padding:4px 6px;box-shadow:0 2px 10px rgba(0,0,0,.12);}\n" +
-    ".toolbar button{background:transparent;color:var(--mmx-ink,#23272E);border:none;padding:3px 8px;font-size:12.5px;border-radius:6px;cursor:pointer;white-space:nowrap;font-weight:500;font-family:inherit;}\n" +
-    ".toolbar button:hover{background:rgba(127,127,127,.15);}\n" +
-    ".toolbar button.danger{color:#C0392B;}\n" +
-    ".toolbar button.primary{color:var(--mmx-select,#2563EB);font-weight:700;}\n" +
-    ".edgepop{position:absolute;z-index:32;min-width:240px;background:var(--mmx-surface,#FFFFFF);border:1px solid var(--mmx-border,#E5E2DB);border-radius:10px;padding:10px 12px;box-shadow:0 4px 16px rgba(0,0,0,.15);display:flex;flex-direction:column;gap:6px;font-size:13px;}\n" +
-    ".edgepop .edgeline{display:flex;gap:6px;align-items:center;}\n" +
-    ".edgepop .edgeline.struck{text-decoration:line-through;opacity:.6;}\n" +
-    ".edgepop code{background:rgba(127,127,127,.15);padding:1px 6px;border-radius:4px;font-size:12px;font-family:ui-monospace,Menlo,monospace;}\n" +
-    ".edgepop input{width:90px;border:1px solid var(--mmx-border,#E5E2DB);border-radius:6px;padding:3px 7px;font-size:12.5px;background:var(--mmx-surface,#FFFFFF);color:var(--mmx-ink,#23272E);font-family:inherit;}\n" +
-    ".edgepop button{background:transparent;border:none;color:#C0392B;cursor:pointer;font-size:12.5px;padding:2px 4px;font-family:inherit;}\n" +
-    ".edgepop button.undo{color:var(--mmx-select,#2563EB);}\n" +
     ".staging{position:relative;display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;justify-content:center;}\n" +
-    ".snode{border:1.5px dashed var(--mmx-accent,#B04A17);border-radius:8px;background:#FFFFFF;color:#23272E;padding:8px 16px;font-size:12.5px;cursor:pointer;min-width:70px;text-align:center;}\n" +
+    ".snode{position:relative;border:1.5px dashed var(--mmx-accent,#B04A17);border-radius:8px;background:#FFFFFF;color:#23272E;padding:8px 16px;font-size:12.5px;cursor:pointer;min-width:70px;text-align:center;user-select:none;}\n" +
     ".snode.selected{border-style:solid;border-color:var(--mmx-select,#2563EB);}\n" +
-    ".snode.linksrc{border-style:solid;border-color:var(--mmx-accent,#B04A17);border-width:2px;}\n" +
     ".bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;}\n" +
     ".bar input{flex:1;min-width:160px;background:var(--mmx-surface,#FFFFFF);color:var(--mmx-ink,#23272E);border:1px solid var(--mmx-border,#E5E2DB);border-radius:8px;padding:9px 12px;font-size:14px;font-family:inherit;}\n" +
     ".bar button{background:var(--mmx-accent,#B04A17);color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;}\n" +
     ".bar button.ghost{background:transparent;color:var(--mmx-ink,#23272E);border:1px solid var(--mmx-border,#E5E2DB);font-weight:400;}\n" +
+    ".bar button[hidden]{display:none;}\n" +
     ".status{font-size:13px;color:var(--mmx-muted,#6E6A63);min-height:1.2em;margin-top:6px;}\n";
 
   function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
@@ -95,7 +86,7 @@
     l = l.replace(/[\r\n]+/g, " ").trim();
     return /[\[\]{}()|"<>#;]/.test(l) ? '"' + l.replace(/"/g, "'") + '"' : l;
   }
-  function edgeLabel(l) {
+  function edgeLabelText(l) {
     // '|' and newlines would change the mermaid parse; drop them.
     return l.replace(/[|\r\n]+/g, " ").trim();
   }
@@ -118,6 +109,7 @@
       "</div>" +
       '<div class="bar">' +
       '  <button class="ghost addnode" type="button"></button>' +
+      '  <button class="ghost autolayout" type="button" hidden></button>' +
       '  <input class="note" type="text">' +
       '  <button class="send" type="button"></button>' +
       '  <button class="ghost revert" type="button"></button>' +
@@ -130,15 +122,20 @@
     var staging = rootEl.querySelector(".staging");
     var noteEl = rootEl.querySelector(".note");
     var statusEl = rootEl.querySelector(".status");
+    var autoBtn = rootEl.querySelector(".autolayout");
     rootEl.querySelector(".addnode").textContent = S.addNode;
     rootEl.querySelector(".send").textContent = S.send;
     rootEl.querySelector(".revert").textContent = S.revert;
+    autoBtn.textContent = S.autoLayout;
     noteEl.placeholder = S.notePlaceholder;
 
-    var model = null, baseline = null, selected = null, linking = null;
-    var destroyed = false;
+    // model.nodes[id] = {label, shape, x?,y?,w?,h?, tx?,ty? (temp), deleted?, modified?, fresh?}
+    // model.edges    = [{from, to, label, deleted?, pending?, labelChanged?, origLabel?}]
+    var model = null, baseline = null, selected = null, destroyed = false;
+    var manual = false; // temporary-placement mode: svg edges hidden, all edges overlay-drawn
 
     function setStatus(m) { statusEl.textContent = m || ""; }
+    function idleStatus() { setStatus(manual ? S.manualMode : (opsCount() > 0 ? S.pendingOps(opsCount()) : S.idle)); }
 
     function opsCount() {
       if (!model) return 0;
@@ -147,18 +144,15 @@
         var d = model.nodes[id];
         if (d.deleted || d.modified || d.fresh) n++;
       });
-      model.edges.forEach(function (e) {
-        if (e.deleted || e.pending || e.labelChanged) n++;
-      });
+      model.edges.forEach(function (e) { if (e.deleted || e.pending || e.labelChanged) n++; });
       return n;
     }
     function announce() {
-      var n = opsCount();
-      setStatus(n > 0 ? S.pendingOps(n) : S.idle);
-      if (opts.onChange) opts.onChange({ source: serialize(), ops: n });
+      idleStatus();
+      if (opts.onChange) opts.onChange({ source: serialize(), ops: opsCount() });
     }
 
-    // ---- serialization (flowchart subset; deleted entries skipped) ----
+    // ---- serialization ----
     function alive(id) { var n = model.nodes[id]; return n && !n.deleted; }
     function decl(id) {
       var n = model.nodes[id], l = quoteLabel((n && n.label) || id);
@@ -170,7 +164,7 @@
       function ref(id) { if (seen[id]) return id; seen[id] = true; return decl(id); }
       model.edges.forEach(function (e) {
         if (e.deleted || !alive(e.from) || !alive(e.to)) return;
-        var l = e.label ? edgeLabel(e.label) : "";
+        var l = e.label ? edgeLabelText(e.label) : "";
         lines.push("    " + ref(e.from) + " " + (l ? "-->|" + l + "|" : "-->") + " " + ref(e.to));
       });
       Object.keys(model.nodes).forEach(function (id) {
@@ -183,16 +177,23 @@
     function scaleOf() {
       var svg = svgslot.querySelector("svg");
       if (!svg || !svg.viewBox || !svg.viewBox.baseVal.width) return null;
-      return { s: svg.clientWidth / svg.viewBox.baseVal.width };
+      return svg.clientWidth / svg.viewBox.baseVal.width;
+    }
+    function nodeBox(id) {
+      // display-space box {l,t,w,h} or null (staged node handled separately)
+      var n = model.nodes[id], s = scaleOf();
+      if (!n || typeof n.x !== "number" || !s) return null;
+      var l = typeof n.tx === "number" ? n.tx : n.x * s;
+      var t = typeof n.ty === "number" ? n.ty : n.y * s;
+      return { l: l, t: t, w: n.w * s, h: n.h * s };
     }
     function centerOf(id) {
-      var n = model.nodes[id], sc = scaleOf();
-      if (n && typeof n.x === "number" && sc)
-        return { x: (n.x + n.w / 2) * sc.s, y: (n.y + n.h / 2) * sc.s };
+      var b = nodeBox(id);
+      if (b) return { x: b.l + b.w / 2, y: b.t + b.h / 2 };
       var el = staging.querySelector('[data-id="' + id + '"]');
       if (el) {
-        var b = el.getBoundingClientRect(), r = svgbox.getBoundingClientRect();
-        return { x: b.left - r.left + b.width / 2, y: b.top - r.top + b.height / 2 };
+        var r = el.getBoundingClientRect(), br = svgbox.getBoundingClientRect();
+        return { x: r.left - br.left + r.width / 2, y: r.top - br.top + r.height / 2 };
       }
       return null;
     }
@@ -203,74 +204,175 @@
       if (s) return { left: s.offsetLeft, top: s.offsetTop, width: s.offsetWidth, height: s.offsetHeight, host: staging };
       return null;
     }
+    function localPoint(ev) {
+      var r = svgbox.getBoundingClientRect();
+      return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+    }
+    function nodeAtPoint(p) {
+      var found = null;
+      Object.keys(model.nodes).forEach(function (id) {
+        if (!alive(id)) return;
+        var b = nodeBox(id);
+        if (b && p.x >= b.l && p.x <= b.l + b.w && p.y >= b.t && p.y <= b.t + b.h) found = id;
+      });
+      return found;
+    }
 
-    // ---- rendering ----
+    // ---- edge hit targets on the raw SVG (normal mode) ----
+    // mmdr marks edge groups with data-edge-id; we identify the logical edge
+    // by matching the path's endpoints to node boxes (order in the SVG is not
+    // a documented contract, geometry is).
+    function logicalEdgeForElement(el) {
+      var path = el.tagName === "path" ? el : el.querySelector("path");
+      if (!path || !path.getTotalLength) return null;
+      var s = scaleOf();
+      if (!s) return null;
+      var svg = svgslot.querySelector("svg");
+      var toDisplay = function (pt) { return { x: pt.x * s, y: pt.y * s }; };
+      var a, b;
+      try {
+        a = toDisplay(path.getPointAtLength(0));
+        b = toDisplay(path.getPointAtLength(path.getTotalLength()));
+      } catch (e) { return null; }
+      function nearNode(p) {
+        var best = null, bestD = 1e9;
+        Object.keys(model.nodes).forEach(function (id) {
+          var n = model.nodes[id];
+          if (typeof n.x !== "number") return;
+          var cx = (n.x + n.w / 2) * s, cy = (n.y + n.h / 2) * s;
+          var dx = Math.max(Math.abs(p.x - cx) - (n.w * s) / 2, 0);
+          var dy = Math.max(Math.abs(p.y - cy) - (n.h * s) / 2, 0);
+          var d = dx * dx + dy * dy;
+          if (d < bestD) { bestD = d; best = id; }
+        });
+        return bestD < 400 ? best : null; // within ~20px of a node border
+      }
+      var from = nearNode(a), to = nearNode(b);
+      if (!from || !to) return null;
+      var candidates = model.edges.filter(function (e) {
+        return !e.pending && ((e.from === from && e.to === to) || (e.from === to && e.to === from));
+      });
+      if (!candidates.length) return null;
+      var exact = candidates.filter(function (e) { return e.from === from && e.to === to; });
+      return (exact[0] || candidates[0]);
+    }
+    function wireSvgEdgeTargets() {
+      var svg = svgslot.querySelector("svg");
+      if (!svg) return;
+      svg.querySelectorAll("[data-edge-id]").forEach(function (el) {
+        el.style.cursor = "pointer";
+        el.style.pointerEvents = "auto";
+        el.addEventListener("click", function (ev) {
+          if (manual) return;
+          ev.stopPropagation();
+          var e = logicalEdgeForElement(el);
+          if (!e) return;
+          var p = localPoint(ev);
+          openEdgeMenu(e, p.x, p.y);
+        });
+      });
+    }
+    function setSvgEdgesVisible(v) {
+      var svg = svgslot.querySelector("svg");
+      if (!svg) return;
+      svg.querySelectorAll("[data-edge-id]").forEach(function (el) {
+        el.style.opacity = v ? "" : "0";
+      });
+    }
+
+    // ---- overlay rendering ----
     function clearFloat() {
-      rootEl.querySelectorAll(".inline,.toolbar,.edgepop").forEach(function (e) { e.remove(); });
+      rootEl.querySelectorAll(".inline,.menu").forEach(function (e) { e.remove(); });
     }
     function render() {
       clearFloat();
-      svgbox.querySelectorAll(".hit,.pendlines").forEach(function (e) { e.remove(); });
+      svgbox.querySelectorAll(".hit,.ghost,.handle,.overlaylines").forEach(function (e) { e.remove(); });
       staging.innerHTML = "";
       if (!model) return;
-      var sc = scaleOf();
       Object.keys(model.nodes).forEach(function (id) {
         var n = model.nodes[id];
-        if (typeof n.x === "number" && sc) {
+        var b = nodeBox(id);
+        if (b) {
+          if (typeof n.tx === "number") { // ghost at the original spot
+            var g = document.createElement("div");
+            var s = scaleOf();
+            g.className = "ghost";
+            g.style.left = n.x * s + "px"; g.style.top = n.y * s + "px";
+            g.style.width = n.w * s + "px"; g.style.height = n.h * s + "px";
+            svgbox.appendChild(g);
+          }
           var d = document.createElement("div");
-          d.className = "hit" + (n.deleted ? " deleted" : n.modified ? " modified" : "") +
-            (id === selected ? " selected" : "") + (id === linking ? " linksrc" : "");
-          d.style.left = n.x * sc.s + "px";
-          d.style.top = n.y * sc.s + "px";
-          d.style.width = n.w * sc.s + "px";
-          d.style.height = n.h * sc.s + "px";
-          d.dataset.id = id;
-          d.title = id;
-          if (n.modified || n.deleted) d.textContent = n.label || id;
-          d.addEventListener("click", function (ev) { ev.stopPropagation(); onNode(id); });
+          d.className = "hit" + (n.deleted ? " deleted" : (n.modified || typeof n.tx === "number") ? " modified" : "") +
+            (id === selected ? " selected" : "");
+          d.style.left = b.l + "px"; d.style.top = b.t + "px";
+          d.style.width = b.w + "px"; d.style.height = b.h + "px";
+          d.dataset.id = id; d.title = id;
+          if (n.modified || n.deleted || typeof n.tx === "number") d.textContent = n.label || id;
+          wireNodePointer(d, id);
           svgbox.appendChild(d);
         } else {
-          var s = document.createElement("div");
-          s.className = "snode" + (id === selected ? " selected" : "") + (id === linking ? " linksrc" : "");
-          s.dataset.id = id;
-          s.textContent = (n.label || id) + " " + S.staged;
-          s.addEventListener("click", function (ev) { ev.stopPropagation(); onNode(id); });
-          staging.appendChild(s);
+          var sn = document.createElement("div");
+          sn.className = "snode" + (id === selected ? " selected" : "");
+          sn.dataset.id = id;
+          sn.textContent = (n.label || id) + (n.deleted ? " ✕" : "");
+          wireNodePointer(sn, id);
+          staging.appendChild(sn);
         }
       });
-      drawPendingEdges();
+      drawOverlayEdges();
     }
-    function drawPendingEdges() {
-      var old = svgbox.querySelector(".pendlines");
+
+    function overlayEdgeList() {
+      if (manual) {
+        return model.edges.filter(function (e) { return !e.deleted && alive(e.from) && alive(e.to); });
+      }
+      return model.edges.filter(function (e) { return e.pending && !e.deleted && alive(e.from) && alive(e.to); });
+    }
+    function drawOverlayEdges() {
+      var old = svgbox.querySelector(".overlaylines");
       if (old) old.remove();
-      var pend = model.edges.filter(function (e) { return e.pending && !e.deleted && alive(e.from) && alive(e.to); });
-      if (!pend.length) return;
+      setSvgEdgesVisible(!manual);
+      var list = overlayEdgeList();
+      if (!list.length) return;
       var NS = "http://www.w3.org/2000/svg";
       var box = svgbox.getBoundingClientRect();
       var ov = document.createElementNS(NS, "svg");
-      ov.setAttribute("class", "pendlines");
+      ov.setAttribute("class", "overlaylines");
       ov.setAttribute("width", box.width);
       ov.setAttribute("height", svgbox.scrollHeight || box.height);
       ov.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:20;overflow:visible";
       var accent = getComputedStyle(container).getPropertyValue("--mmx-accent").trim() || "#B04A17";
+      var ink = manual ? "#5B6470" : accent;
+      var mid = "mmxarrow" + Math.floor(Math.random() * 1e9);
       var defs = document.createElementNS(NS, "defs");
-      var mid = "mmxpend" + Math.floor(Math.random() * 1e9);
-      defs.innerHTML = '<marker id="' + mid + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="' + accent + '"/></marker>';
+      defs.innerHTML =
+        '<marker id="' + mid + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="' + ink + '"/></marker>' +
+        '<marker id="' + mid + 'p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="' + accent + '"/></marker>';
       ov.appendChild(defs);
-      pend.forEach(function (e) {
+      list.forEach(function (e) {
         var a = centerOf(e.from), b = centerOf(e.to);
         if (!a || !b) return;
+        var stroke = e.pending ? accent : ink;
         var ln = document.createElementNS(NS, "line");
         ln.setAttribute("x1", a.x); ln.setAttribute("y1", a.y);
         ln.setAttribute("x2", b.x); ln.setAttribute("y2", b.y);
-        ln.setAttribute("stroke", accent); ln.setAttribute("stroke-width", "2");
-        ln.setAttribute("stroke-dasharray", "6 4");
-        ln.setAttribute("marker-end", "url(#" + mid + ")");
+        ln.setAttribute("stroke", stroke); ln.setAttribute("stroke-width", "2");
+        if (e.pending) ln.setAttribute("stroke-dasharray", "6 4");
+        ln.setAttribute("marker-end", "url(#" + mid + (e.pending ? "p" : "") + ")");
+        if (manual) { // clickable in manual mode
+          ln.style.pointerEvents = "stroke";
+          ln.style.cursor = "pointer";
+          ln.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            var p = localPoint(ev);
+            openEdgeMenu(e, p.x, p.y);
+          });
+        }
         ov.appendChild(ln);
         if (e.label) {
           var t = document.createElementNS(NS, "text");
-          t.setAttribute("x", (a.x + b.x) / 2); t.setAttribute("y", (a.y + b.y) / 2 - 4);
-          t.setAttribute("fill", accent); t.setAttribute("font-size", "11");
+          t.setAttribute("x", (a.x + b.x) / 2); t.setAttribute("y", (a.y + b.y) / 2 - 5);
+          t.setAttribute("fill", stroke); t.setAttribute("font-size", "11");
           t.setAttribute("text-anchor", "middle");
           t.textContent = e.label;
           ov.appendChild(t);
@@ -279,29 +381,155 @@
       svgbox.appendChild(ov);
     }
 
-    // ---- interaction ----
-    function onNode(id) {
-      var n = model.nodes[id];
-      if (linking && linking !== id) {
-        if (!n.deleted) {
-          model.edges.push({ from: linking, to: id, label: null, pending: true });
-          setStatus(S.connected(linking, id));
+    // ---- pointer wiring: click menu / drag placement / handle connect ----
+    var DRAG_MIN = 5;
+    function wireNodePointer(el, id) {
+      el.addEventListener("pointerdown", function (ev) {
+        if (ev.button !== 0) return;
+        ev.stopPropagation();
+        var start = { x: ev.clientX, y: ev.clientY };
+        var startBox = nodeBox(id);
+        var isPlaced = !!startBox;
+        var moved = false;
+        var pid = ev.pointerId;
+        el.setPointerCapture && el.setPointerCapture(pid);
+        function onMove(mv) {
+          if (mv.pointerId !== pid) return;
+          var dx = mv.clientX - start.x, dy = mv.clientY - start.y;
+          if (!moved && Math.abs(dx) < DRAG_MIN && Math.abs(dy) < DRAG_MIN) return;
+          if (!isPlaced) return; // staged nodes are not draggable
+          if (!moved) {
+            moved = true;
+            clearFloat();
+            if (!manual) { manual = true; autoBtn.hidden = false; drawOverlayEdges(); idleStatus(); }
+            el.classList.add("dragging");
+          }
+          var n = model.nodes[id];
+          n.tx = startBox.l + dx;
+          n.ty = startBox.t + dy;
+          el.style.left = n.tx + "px";
+          el.style.top = n.ty + "px";
+          el.classList.add("modified");
+          if (!el.textContent) el.textContent = n.label || id;
+          drawOverlayEdges();
         }
-        var src = linking;
-        linking = null; selected = id;
-        render(); openEditor(id); announce();
-        return;
-      }
-      linking = null;
-      if (n.deleted) {
-        delete n.deleted;
-        selected = id; render(); announce();
-        return;
-      }
-      selected = id; render(); openEditor(id);
+        function onUp(uv) {
+          if (uv.pointerId !== pid) return;
+          document.removeEventListener("pointermove", onMove);
+          document.removeEventListener("pointerup", onUp);
+          el.classList.remove("dragging");
+          if (!moved) onNodeClick(id);
+        }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+      });
+      el.addEventListener("pointerenter", function () { showHandle(id); });
     }
 
-    function openEditor(id) {
+    var handleEl = null;
+    function showHandle(id) {
+      if (!alive(id)) return;
+      var b = nodeBox(id);
+      if (!b) return; // no connect handle on staged nodes (click-connect via menu could come later)
+      if (handleEl) handleEl.remove();
+      handleEl = document.createElement("div");
+      handleEl.className = "handle";
+      handleEl.style.left = b.l + b.w - 7 + "px";
+      handleEl.style.top = b.t + b.h / 2 - 7 + "px";
+      handleEl.title = "drag to connect";
+      handleEl.addEventListener("pointerdown", function (ev) {
+        if (ev.button !== 0) return;
+        ev.stopPropagation(); ev.preventDefault();
+        startConnectDrag(id, ev);
+      });
+      svgbox.appendChild(handleEl);
+    }
+    function startConnectDrag(fromId, ev) {
+      clearFloat();
+      var NS = "http://www.w3.org/2000/svg";
+      var accent = getComputedStyle(container).getPropertyValue("--mmx-accent").trim() || "#B04A17";
+      var box = svgbox.getBoundingClientRect();
+      var band = document.createElementNS(NS, "svg");
+      band.setAttribute("width", box.width);
+      band.setAttribute("height", svgbox.scrollHeight || box.height);
+      band.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:29;overflow:visible";
+      var ln = document.createElementNS(NS, "line");
+      var a = centerOf(fromId);
+      ln.setAttribute("x1", a.x); ln.setAttribute("y1", a.y);
+      ln.setAttribute("x2", a.x); ln.setAttribute("y2", a.y);
+      ln.setAttribute("stroke", accent); ln.setAttribute("stroke-width", "2");
+      ln.setAttribute("stroke-dasharray", "6 4");
+      band.appendChild(ln);
+      svgbox.appendChild(band);
+      var pid = ev.pointerId;
+      function onMove(mv) {
+        if (mv.pointerId !== pid) return;
+        var p = localPoint(mv);
+        ln.setAttribute("x2", p.x); ln.setAttribute("y2", p.y);
+      }
+      function onUp(uv) {
+        if (uv.pointerId !== pid) return;
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        band.remove();
+        var target = nodeAtPoint(localPoint(uv));
+        if (target && target !== fromId) {
+          var e = { from: fromId, to: target, label: null, pending: true };
+          model.edges.push(e);
+          render(); announce();
+          setStatus(S.connected(fromId, target));
+          var c = centerOf(target);
+          if (c) openEdgeMenu(e, c.x, c.y - 20, true);
+        } else {
+          render(); idleStatus();
+        }
+      }
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    }
+
+    // ---- menus ----
+    function onNodeClick(id) {
+      var n = model.nodes[id];
+      if (n.deleted) { delete n.deleted; selected = id; render(); announce(); return; }
+      selected = id;
+      render();
+      var b = boxRectOf(id);
+      if (!b) return;
+      openNodeMenu(id, b);
+    }
+    function menuEl(x, y, hostEl) {
+      clearFloat();
+      var m = document.createElement("div");
+      m.className = "menu";
+      m.style.left = Math.max(x, 0) + "px";
+      m.style.top = Math.max(y, 0) + "px";
+      m.addEventListener("click", function (ev) { ev.stopPropagation(); });
+      m.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); });
+      (hostEl || svgbox).appendChild(m);
+      return m;
+    }
+    function mbtn(m, txt, cls, fn) {
+      var b = document.createElement("button");
+      b.type = "button"; b.textContent = txt; if (cls) b.className = cls;
+      b.addEventListener("click", fn);
+      m.appendChild(b);
+      return b;
+    }
+    function openNodeMenu(id, r) {
+      var m = menuEl(r.left, Math.max(r.top - 36, 0), r.host);
+      mbtn(m, S.menuEdit, null, function () { openInlineEditor(id); });
+      mbtn(m, S.menuDelete, "danger", function () {
+        var n = model.nodes[id];
+        if (n.fresh) {
+          delete model.nodes[id];
+          model.edges = model.edges.filter(function (e) { return e.from !== id && e.to !== id; });
+        } else n.deleted = true;
+        selected = null; clearFloat(); render(); announce();
+        setStatus(S.deleted(id));
+      });
+    }
+    function openInlineEditor(id) {
       clearFloat();
       var r = boxRectOf(id);
       if (!r) return;
@@ -314,9 +542,10 @@
       inp.style.top = r.top + "px";
       inp.style.width = Math.max(r.width, 110) + "px";
       inp.style.height = r.height + "px";
+      inp.addEventListener("click", function (ev) { ev.stopPropagation(); });
+      inp.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); });
       r.host.appendChild(inp);
       inp.focus(); inp.select();
-      inp.addEventListener("click", function (ev) { ev.stopPropagation(); });
       function commit() {
         var v = inp.value.trim();
         if (v) {
@@ -324,107 +553,71 @@
           var orig = baseline.nodes[id] ? baseline.nodes[id].label : null;
           if (!n.fresh) { if (v !== orig) n.modified = true; else delete n.modified; }
         }
-        done();
+        clearFloat(); render(); announce();
       }
-      function done() { clearFloat(); render(); announce(); }
-      function cancel() { clearFloat(); render(); setStatus(opsCount() > 0 ? S.pendingOps(opsCount()) : S.idle); }
+      function cancel() { clearFloat(); render(); idleStatus(); }
       inp.addEventListener("keydown", function (ev) {
         if (ev.key === "Enter") { ev.preventDefault(); commit(); }
         if (ev.key === "Escape") { ev.preventDefault(); cancel(); }
       });
-
-      var tb = document.createElement("div");
-      tb.className = "toolbar";
-      tb.style.left = r.left + "px";
-      tb.style.top = Math.max(r.top - 38, 0) + "px";
-      tb.addEventListener("click", function (ev) { ev.stopPropagation(); });
-      function tbtn(txt, cls, fn) {
-        var b = document.createElement("button");
-        b.type = "button"; b.textContent = txt; if (cls) b.className = cls;
-        b.addEventListener("click", fn);
-        tb.appendChild(b);
+      inp.addEventListener("blur", function () { setTimeout(function () { if (rootEl.contains(inp)) commit(); }, 120); });
+    }
+    function openEdgeMenu(e, x, y, focusLabel) {
+      var m = menuEl(x, y);
+      var li = document.createElement("input");
+      li.value = e.label || "";
+      li.placeholder = S.menuLabel;
+      li.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); applyLabel(); }
+        if (ev.key === "Escape") { ev.preventDefault(); clearFloat(); idleStatus(); }
+      });
+      m.appendChild(li);
+      function applyLabel() {
+        if (!e.pending && !("origLabel" in e)) e.origLabel = e.label;
+        e.label = li.value.trim() || null;
+        if (!e.pending) {
+          if (e.label === e.origLabel) delete e.labelChanged;
+          else e.labelChanged = true;
+        }
+        clearFloat(); render(); announce();
       }
-      tbtn(S.apply, "primary", commit);
-      tbtn(S.connect, null, function () {
-        linking = id; clearFloat(); render(); setStatus(S.connectFrom(id));
+      mbtn(m, S.apply, null, applyLabel);
+      mbtn(m, S.menuDelete, "danger", function () {
+        if (e.pending) {
+          var i = model.edges.indexOf(e);
+          if (i >= 0) model.edges.splice(i, 1);
+        } else e.deleted = true;
+        clearFloat(); render(); announce();
       });
-      tbtn(S.edges, null, function () { openEdgePop(id, r); });
-      tbtn(S.remove, "danger", function () {
-        if (n.fresh) {
-          delete model.nodes[id];
-          model.edges = model.edges.filter(function (e) { return e.from !== id && e.to !== id; });
-        } else n.deleted = true;
-        selected = null; clearFloat(); render(); announce();
-        setStatus(S.deleted(id));
-      });
-      r.host.appendChild(tb);
+      if (focusLabel) li.focus();
     }
 
-    function openEdgePop(id, r) {
-      var old = rootEl.querySelector(".edgepop");
-      if (old) { old.remove(); return; }
-      var pop = document.createElement("div");
-      pop.className = "edgepop";
-      pop.style.left = r.left + "px";
-      pop.style.top = r.top + r.height + 6 + "px";
-      pop.addEventListener("click", function (ev) { ev.stopPropagation(); });
-      var any = false;
-      model.edges.forEach(function (e, i) {
-        if (e.from !== id && e.to !== id) return;
-        any = true;
-        var row = document.createElement("div");
-        row.className = "edgeline" + (e.deleted ? " struck" : "");
-        var c = document.createElement("code");
-        c.textContent = e.from + " → " + e.to;
-        row.appendChild(c);
-        var li = document.createElement("input");
-        li.value = e.label || "";
-        li.placeholder = S.label;
-        li.addEventListener("change", function () {
-          if (!e.pending && !("origLabel" in e)) e.origLabel = e.label;
-          e.label = li.value.trim() || null;
-          if (!e.pending) {
-            if (e.label === e.origLabel) delete e.labelChanged;
-            else e.labelChanged = true;
-          }
-          drawPendingEdges(); announce();
-        });
-        row.appendChild(li);
-        var del = document.createElement("button");
-        del.type = "button";
-        del.textContent = e.deleted ? S.restore : S.remove;
-        if (e.deleted) del.className = "undo";
-        del.addEventListener("click", function () {
-          if (e.pending && !e.deleted) model.edges.splice(i, 1);
-          else e.deleted = !e.deleted;
-          pop.remove(); render(); announce();
-          var rr = boxRectOf(id);
-          if (rr) openEdgePop(id, rr);
-        });
-        row.appendChild(del);
-        pop.appendChild(row);
-      });
-      if (!any) {
-        var no = document.createElement("span");
-        no.textContent = S.noEdges;
-        pop.appendChild(no);
-      }
-      r.host.appendChild(pop);
-    }
-
-    function outsideClick() { clearFloat(); selected = null; linking = null; if (model) render(); }
-    rootEl.addEventListener("click", outsideClick);
+    // ---- outside click / global controls ----
+    rootEl.addEventListener("click", function () {
+      clearFloat(); selected = null;
+      if (handleEl) { handleEl.remove(); handleEl = null; }
+      if (model) render();
+      idleStatus();
+    });
     rootEl.querySelector(".bar").addEventListener("click", function (ev) { ev.stopPropagation(); });
 
     rootEl.querySelector(".addnode").addEventListener("click", function () {
       var i = 1; while (model.nodes["n" + i]) i++;
       var id = "n" + i;
       model.nodes[id] = { label: S.newNodeLabel, shape: "Rectangle", fresh: true };
-      selected = id; render(); openEditor(id); announce();
+      selected = id; render(); openInlineEditor(id); announce();
+    });
+    autoBtn.addEventListener("click", function () {
+      manual = false; autoBtn.hidden = true;
+      Object.keys(model.nodes).forEach(function (id) {
+        delete model.nodes[id].tx; delete model.nodes[id].ty;
+      });
+      render(); idleStatus();
     });
     rootEl.querySelector(".revert").addEventListener("click", function () {
       model = deepCopy(baseline.model);
-      selected = null; linking = null; render(); announce();
+      manual = false; autoBtn.hidden = true;
+      selected = null; render(); announce();
     });
     rootEl.querySelector(".send").addEventListener("click", function () {
       if (opsCount() === 0) { setStatus(S.nothingToSend); return; }
@@ -444,10 +637,12 @@
           var dm = /^\s*flowchart\s+(\w+)/.exec(d.source || "");
           model.dir = dm ? dm[1] : "TD";
           baseline = { model: deepCopy(model), nodes: deepCopy(d.nodes), source: d.source || "" };
-          selected = null; linking = null;
+          selected = null;
+          manual = false; autoBtn.hidden = true;
         }
+        wireSvgEdgeTargets();
         render();
-        setStatus(S.idle);
+        idleStatus();
       },
       getSource: serialize,
       getNote: function () { return noteEl.value.trim(); },
@@ -463,7 +658,6 @@
   }
 
   // ---- <mmx-editor> custom element (the standard interface) ----
-  // Data flows in through properties/methods, out through DOM events:
   //   el.load({svg, nodes, edges, source})   partial update, no page reload
   //   el.addEventListener("mmx-submit", e => e.detail /* {source, note, ops} */)
   //   el.addEventListener("mmx-change", e => e.detail /* {source, ops} */)
@@ -512,5 +706,5 @@
     if (!customElements.get("mmx-editor")) customElements.define("mmx-editor", MmxEditorElement);
   }
 
-  return { mount: mount, version: "0.2.0" };
+  return { mount: mount, version: "0.3.0" };
 });
