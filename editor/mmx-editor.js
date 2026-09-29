@@ -213,21 +213,33 @@
       return null;
     }
     function boundsOf(id) {
+      var shape = (model.nodes[id] && model.nodes[id].shape) || "Rectangle";
       var b = nodeBox(id);
-      if (b) return { cx: b.l + b.w / 2, cy: b.t + b.h / 2, hw: b.w / 2, hh: b.h / 2 };
+      if (b) return { cx: b.l + b.w / 2, cy: b.t + b.h / 2, hw: b.w / 2, hh: b.h / 2, shape: shape };
       var el = staging.querySelector('[data-id="' + id + '"]');
       if (el) {
         var r = el.getBoundingClientRect(), br = svgbox.getBoundingClientRect();
         var w = r.width / vz, h = r.height / vz;
-        return { cx: (r.left - br.left) / vz + w / 2, cy: (r.top - br.top) / vz + h / 2, hw: w / 2, hh: h / 2 };
+        return { cx: (r.left - br.left) / vz + w / 2, cy: (r.top - br.top) / vz + h / 2, hw: w / 2, hh: h / 2, shape: "Rectangle" };
       }
       return null;
     }
     // Trim a center-to-center segment so it starts and ends on the node
     // rectangles' borders instead of plunging into the bodies.
     function exitT(bounds, dx, dy) {
-      var tx = dx ? bounds.hw / Math.abs(dx) : Infinity;
-      var ty = dy ? bounds.hh / Math.abs(dy) : Infinity;
+      var ax = Math.abs(dx), ay = Math.abs(dy);
+      if (!ax && !ay) return 0;
+      var sh = bounds.shape || "Rectangle";
+      if (sh === "Diamond") {
+        // rhombus |x|/hw + |y|/hh = 1
+        return 1 / (ax / bounds.hw + ay / bounds.hh);
+      }
+      if (sh === "Circle" || sh === "Ellipse" || sh === "Stadium" || sh === "Round") {
+        // ellipse (x/hw)^2 + (y/hh)^2 = 1
+        return 1 / Math.sqrt((ax * ax) / (bounds.hw * bounds.hw) + (ay * ay) / (bounds.hh * bounds.hh));
+      }
+      var tx = ax ? bounds.hw / ax : Infinity;
+      var ty = ay ? bounds.hh / ay : Infinity;
       return Math.min(tx, ty);
     }
     function clipSegment(A, B) {
