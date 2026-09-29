@@ -26,6 +26,19 @@ echo "$PATH"            # where can you place a binary?
 
 ## Step 2: install by the first path that applies
 
+### Path 0 — network access (fastest: prebuilt binary, no toolchain)
+
+```bash
+curl -LsSf https://github.com/Eastsidegunn/mmx/releases/latest/download/mmx-installer.sh | sh
+```
+
+This downloads a prebuilt binary for macOS (arm64/x64), Linux (arm64/x64) or
+Windows (x64) and installs it under `$CARGO_HOME/bin` (default `~/.cargo/bin`).
+To keep the install inside your workspace on a shared machine, run it as
+`CARGO_HOME=$PWD/tools sh` with `--no-modify-path`, then use
+`$PWD/tools/bin/mmx`. Individual `.tar.xz` archives and sha256 checksums are
+on the GitHub Releases page if you prefer to fetch and unpack manually.
+
 ### Path A — Rust toolchain already present (`cargo` found)
 
 ```bash
@@ -60,8 +73,6 @@ before relying on it.
 
 If you have no Rust, no network, and no binary, you cannot install mmx.
 Say so to your user; do not attempt system package managers or `sudo`.
-(Prebuilt release downloads and an npm wrapper are planned; when they exist
-they will be listed above Path A.)
 
 ## Step 3: make sure `mmx` is on PATH
 
