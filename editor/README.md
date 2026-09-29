@@ -60,6 +60,16 @@ positions belong to the renderer, not the source.
 
 ## Behavior notes
 
+- **Feed it trusted SVG only.** The module injects the `svg` string into the
+  DOM as-is. It is designed for mmx's own render output; passing SVG from an
+  untrusted source is an XSS risk the module does not defend against.
+- Labels are normalized on serialization: newlines become spaces, `"` inside
+  a quoted label becomes `'`, and `|` in edge labels is dropped (all three
+  would change the mermaid parse). The flowchart direction (`TD`, `LR`, ...)
+  of the confirmed source is preserved.
+- Shadow DOM is required for style isolation. In an environment without it,
+  the module still runs but its styles apply to the whole page.
+
 - Serialization targets the flowchart subset (Rectangle/Diamond shapes,
   labeled edges). Comments and style directives in the original source are
   not preserved by direct-manipulation edits; hosts that need them should
