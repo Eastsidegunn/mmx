@@ -19,6 +19,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Install the agent skill (and optionally Claude Code hooks) so a
+    /// fresh machine is fully set up after `cargo install mmx && mmx init`
+    Init {
+        /// Also install Claude Code hooks in the current directory,
+        /// wired to this diagram path
+        #[arg(long, value_name = "DIAGRAM.mmd")]
+        hooks: Option<PathBuf>,
+    },
     /// Render a diagram and emit diff.json / state.json for the turn
     Render {
         /// Input diagram file (.mmd)
@@ -54,6 +62,13 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::Init { hooks } => match mmx::init::run_init(hooks) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("mmx init: {e:#}");
+                ExitCode::from(1)
+            }
+        },
         Command::Render {
             input,
             by,

@@ -103,7 +103,18 @@ the three output files work; `OK-EXIT2` proves the repairable-error signal
 (exit 2) works. If verification fails, report the exact output to your user
 instead of proceeding.
 
-## Step 5: use it
+## Step 5: finish setup with `mmx init`
+
+```bash
+mmx init                        # agent skill, machine-wide
+mmx init --hooks diagram.mmd    # + automatic-render hooks for this project
+```
+
+This is what makes agent sessions pick mmx up on their own; without it the
+binary works but nothing triggers automatically. Hooks load when a session
+starts, so restart the project's session after installing them.
+
+## Step 6: use it
 
 - Turn routine, diff reading, and error recovery: `skills/mmx/SKILL.md`
 - Full diff.json / state.json field reference: `skills/mmx/references/diff-schema.md`
