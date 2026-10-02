@@ -9,7 +9,11 @@ curl -LsSf https://github.com/Eastsidegunn/mmx/releases/latest/download/mmx-inst
 ```
 
 Prebuilt binaries for macOS, Linux and Windows. Building from source works
-too: `cargo install --path .`
+too: `cargo install --path .` (or `cargo install mmx` from crates.io).
+
+The web pieces are release assets with stable URLs:
+`releases/latest/download/mmx-editor.js` (the `<mmx-editor>` component) and
+`releases/latest/download/mmx_wasm.wasm` (the full mmx turn for browsers).
 
 Setting up in a different environment, or letting an agent install it for itself? See [INSTALL.md](INSTALL.md).
 
