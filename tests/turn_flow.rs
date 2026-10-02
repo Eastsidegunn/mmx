@@ -505,3 +505,54 @@ fn kind_change_is_reported() {
         json!({ "old": kind_before, "new": kind_after })
     );
 }
+
+#[test]
+fn init_installs_skill_and_hooks() {
+    let fake_home = tempdir();
+    let project = tempdir();
+
+    // Skill only.
+    let out = Command::new(env!("CARGO_BIN_EXE_mmx"))
+        .current_dir(&project)
+        .env("HOME", &fake_home)
+        .args(["init"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "init failed: {out:?}");
+    let skill = fake_home.join(".claude/skills/mmx/SKILL.md");
+    assert!(skill.exists());
+    assert!(fake_home
+        .join(".claude/skills/mmx/references/diff-schema.md")
+        .exists());
+    assert!(std::fs::read_to_string(&skill)
+        .unwrap()
+        .contains("mmx render"));
+
+    // Hooks into a clean project.
+    let out = Command::new(env!("CARGO_BIN_EXE_mmx"))
+        .current_dir(&project)
+        .env("HOME", &fake_home)
+        .args(["init", "--hooks", "docs/arch.mmd"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "init --hooks failed: {out:?}");
+    assert!(project.join("adapters/mmx_hook.py").exists());
+    let settings = std::fs::read_to_string(project.join(".claude/settings.json")).unwrap();
+    assert!(settings.contains("docs/arch.mmd"));
+    assert!(!settings.contains("--diagram diagram.mmd"));
+
+    // Existing settings.json must not be clobbered.
+    std::fs::write(project.join(".claude/settings.json"), "{\"custom\":true}").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_mmx"))
+        .current_dir(&project)
+        .env("HOME", &fake_home)
+        .args(["init", "--hooks", "docs/arch.mmd"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(
+        std::fs::read_to_string(project.join(".claude/settings.json")).unwrap(),
+        "{\"custom\":true}"
+    );
+    assert!(project.join(".claude/settings.mmx.json").exists());
+}

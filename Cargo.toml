@@ -1,6 +1,6 @@
 [package]
 name = "mmx"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Conversational diagram protocol: humans and agents talk through mermaid diffs"
 license = "MIT"

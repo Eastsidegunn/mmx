@@ -6,6 +6,7 @@ mmx is a Rust CLI for a human and an AI agent to converse by editing the same Me
 
 ```bash
 curl -LsSf https://github.com/Eastsidegunn/mmx/releases/latest/download/mmx-installer.sh | sh
+mmx init        # installs the agent skill; add --hooks <diagram.mmd> inside a project
 ```
 
 Prebuilt binaries for macOS, Linux and Windows. Building from source works
