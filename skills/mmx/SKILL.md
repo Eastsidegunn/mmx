@@ -54,7 +54,11 @@ mermaid rendering, still prefer embedding mmx's SVG.
 If the human should EDIT the diagram visually, embed the repo's
 `editor/mmx-editor.js` (`<mmx-editor>` web component; zero dependencies):
 feed it `{svg, nodes, edges, source}` from the render outputs and handle its
-`mmx-submit` event. See `editor/README.md`.
+`mmx-submit` event. See `editor/README.md`. For a claude.ai artifact there is
+a ready-made shell with the full round trip (shared-db inbox you poll each
+turn): publish `adapters/claude-artifact/board.html` as described in
+`adapters/claude-artifact/README.md` — do not invent your own transport
+before reading it.
 
 ## Recover errors
 
