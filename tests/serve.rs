@@ -1,0 +1,452 @@
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Barrier};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use serde_json::{json, Value};
+
+const A: &str = "flowchart LR\n    A --> B\n";
+const B: &str = "flowchart LR\n    A --> B\n    B --> C\n";
+const C: &str = "flowchart LR\n    A --> B\n    B --> C\n    C --> D\n";
+
+struct Server {
+    child: Child,
+    addr: SocketAddr,
+    dir: PathBuf,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn tempdir() -> PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "mmx002-{}-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    dir
+}
+
+fn start(source: &str) -> Server {
+    let dir = tempdir();
+    std::fs::write(dir.join("d.mmd"), source).unwrap();
+    start_dir(dir, &[])
+}
+
+fn start_dir(dir: PathBuf, extra: &[&str]) -> Server {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mmx"))
+        .args(["serve", "d.mmd"])
+        .args(extra)
+        .current_dir(&dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut url = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut url)
+        .unwrap();
+    assert!(url.starts_with("http://"), "server failed: {url:?}");
+    let addr = url.trim().trim_start_matches("http://").parse().unwrap();
+    Server { child, addr, dir }
+}
+
+fn request(addr: SocketAddr, method: &str, path: &str, body: Option<&Value>) -> (u16, Vec<u8>) {
+    let body = body.map(Value::to_string).unwrap_or_default();
+    let content_type = if method == "POST" {
+        "Content-Type: application/json\r\n"
+    } else {
+        ""
+    };
+    raw_request(addr, &format!(
+        "{method} {path} HTTP/1.1\r\nHost: localhost:{}\r\n{content_type}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        addr.port(), body.len()
+    ))
+}
+
+fn raw_request(addr: SocketAddr, wire: &str) -> (u16, Vec<u8>) {
+    let mut stream = TcpStream::connect(addr).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream.write_all(wire.as_bytes()).unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let split = response.windows(4).position(|x| x == b"\r\n\r\n").unwrap();
+    let head = String::from_utf8_lossy(&response[..split]);
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    (status, response[split + 4..].to_vec())
+}
+
+fn get_json(addr: SocketAddr, path: &str) -> Value {
+    let (status, body) = request(addr, "GET", path, None);
+    assert_eq!(status, 200);
+    serde_json::from_slice(&body).unwrap()
+}
+
+fn post(addr: SocketAddr, source: &str, note: &str) -> Value {
+    let (status, body) = request(
+        addr,
+        "POST",
+        "/turn",
+        Some(&json!({"source":source,"note":note})),
+    );
+    assert_eq!(status, 200);
+    serde_json::from_slice(&body).unwrap()
+}
+
+fn file_json(dir: &Path, name: &str) -> Value {
+    serde_json::from_slice(&std::fs::read(dir.join(name)).unwrap()).unwrap()
+}
+
+fn sse_connect(addr: SocketAddr) -> BufReader<TcpStream> {
+    let mut stream = TcpStream::connect(addr).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    stream
+        .write_all(
+            format!(
+                "GET /events HTTP/1.1\r\nHost: localhost:{}\r\n\r\n",
+                addr.port()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert!(line.contains("200 OK"), "{line}");
+    loop {
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        if line == "\r\n" {
+            break;
+        }
+    }
+    reader
+}
+
+fn sse_next(reader: &mut BufReader<TcpStream>) -> Value {
+    let mut line = String::new();
+    let mut event = None;
+    loop {
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        if let Some(data) = line.strip_prefix("data: ") {
+            event = Some(serde_json::from_str(data.trim()).unwrap());
+        }
+        if line == "\n" {
+            if let Some(event) = event {
+                return event;
+            }
+        }
+    }
+}
+
+#[test]
+fn mmx002_t1_fixed_routes_and_traversal() {
+    let s = start(A);
+    let (status, page) = request(s.addr, "GET", "/", None);
+    assert_eq!(status, 200);
+    assert!(String::from_utf8(page).unwrap().contains("<mmx-editor>"));
+    let (status, script) = request(s.addr, "GET", "/editor.js", None);
+    assert_eq!(status, 200);
+    assert!(String::from_utf8(script).unwrap().contains("MmxEditor"));
+    assert_eq!(request(s.addr, "GET", "/../Cargo.toml", None).0, 404);
+}
+
+#[test]
+fn mmx002_t2_initial_state_is_stable_baseline() {
+    let s = start(A);
+    let (status, first) = request(s.addr, "GET", "/state", None);
+    let (_, second) = request(s.addr, "GET", "/state", None);
+    assert_eq!(status, 200);
+    assert_eq!(first, second);
+    let value: Value = serde_json::from_slice(&first).unwrap();
+    let state = file_json(&s.dir, "d.state.json");
+    assert_eq!(value["source"], A);
+    assert_eq!(value["nodes"], state["nodes"]);
+    assert_eq!(value["edges"], state["edges"]);
+    assert_eq!(value["by"], "serve");
+    assert!(value["svg"].as_str().unwrap().contains("<svg"));
+}
+
+#[test]
+fn mmx002_t3_human_turn_writes_diff_and_state() {
+    let s = start(A);
+    let result = post(s.addr, B, "추가");
+    assert_eq!(result["exit"], 0);
+    assert!(result["svg"].as_str().unwrap().contains("<svg"));
+    assert!(result["state"].get("svg").is_none());
+    assert_eq!(result["diff"]["nodes"]["added"], json!(["C"]));
+    assert_eq!(std::fs::read_to_string(s.dir.join("d.mmd")).unwrap(), B);
+    let diff = file_json(&s.dir, "d.diff.json");
+    assert_eq!(diff["by"], "human");
+    assert_eq!(diff["note"], "추가");
+    let state = get_json(s.addr, "/state");
+    assert_eq!(
+        mmx::state::hex_sha256(state["source"].as_str().unwrap().as_bytes()),
+        file_json(&s.dir, "d.state.json")["source_sha256"]
+    );
+    assert_eq!(state["nodes"], file_json(&s.dir, "d.state.json")["nodes"]);
+    assert_eq!(state["by"], "human");
+    assert_eq!(state["note"], "추가");
+}
+
+#[test]
+fn mmx002_t4_parse_error_keeps_last_valid_artifacts() {
+    let s = start(A);
+    let svg = std::fs::read(s.dir.join("d.svg")).unwrap();
+    let state = std::fs::read(s.dir.join("d.state.json")).unwrap();
+    let bad = "flowchart LR\n    --> B\n";
+    let result = post(s.addr, bad, "오류");
+    assert_eq!(result["exit"], 2);
+    assert_eq!(result["diff"]["error"]["kind"], "parse");
+    assert_eq!(result["diff"]["error"]["line"], 2);
+    assert_eq!(std::fs::read_to_string(s.dir.join("d.mmd")).unwrap(), bad);
+    assert_eq!(std::fs::read(s.dir.join("d.svg")).unwrap(), svg);
+    assert_eq!(std::fs::read(s.dir.join("d.state.json")).unwrap(), state);
+    assert_eq!(post(s.addr, B, "복구")["exit"], 0);
+    assert_eq!(
+        mmx::state::hex_sha256(
+            get_json(s.addr, "/state")["source"]
+                .as_str()
+                .unwrap()
+                .as_bytes()
+        ),
+        file_json(&s.dir, "d.state.json")["source_sha256"]
+    );
+}
+
+#[test]
+fn mmx002_t5_noop_preserves_diff_bytes() {
+    let s = start(A);
+    post(s.addr, B, "첫 턴");
+    let diff = std::fs::read(s.dir.join("d.diff.json")).unwrap();
+    let result = post(s.addr, B, "반복");
+    assert_eq!(result["exit"], 0);
+    assert_eq!(result["noop"], true);
+    assert_eq!(std::fs::read(s.dir.join("d.diff.json")).unwrap(), diff);
+}
+
+#[test]
+fn mmx002_t6_sse_external_and_turn_broadcast_without_poll_duplicate() {
+    let s = start(A);
+    let mut reader = sse_connect(s.addr);
+    assert_eq!(sse_next(&mut reader)["seq"], 0);
+    std::fs::write(s.dir.join("d.mmd"), B).unwrap();
+    let start = Instant::now();
+    assert_eq!(sse_next(&mut reader)["seq"], 1);
+    assert!(start.elapsed() <= Duration::from_millis(1500));
+    std::fs::write(s.dir.join("d.mmd"), C).unwrap();
+    assert_eq!(sse_next(&mut reader)["seq"], 2);
+    let state = get_json(s.addr, "/state");
+    assert_eq!(
+        mmx::state::hex_sha256(state["source"].as_str().unwrap().as_bytes()),
+        file_json(&s.dir, "d.state.json")["source_sha256"]
+    );
+    let before = state["seq"].as_u64().unwrap();
+    assert_eq!(post(s.addr, A, "human")["exit"], 0);
+    assert_eq!(sse_next(&mut reader)["seq"], before + 1);
+    assert_eq!(get_json(s.addr, "/state")["seq"], before + 1);
+    reader
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_millis(650)))
+        .unwrap();
+    let mut line = String::new();
+    let read = reader.read_line(&mut line);
+    assert!(
+        read.is_err(),
+        "duplicate event unexpectedly arrived: {line:?}"
+    );
+    reader
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert_eq!(post(s.addr, "flowchart LR\n    --> B\n", "bad")["exit"], 2);
+    assert_eq!(sse_next(&mut reader)["seq"], before + 2);
+}
+
+#[test]
+fn mmx002_t7_bind_is_loopback_by_default_and_rejects_external() {
+    let s = start(A);
+    assert!(s.addr.ip().is_loopback());
+    let output = Command::new(env!("CARGO_BIN_EXE_mmx"))
+        .args(["serve", "d.mmd", "--addr", "0.0.0.0:0"])
+        .current_dir(&s.dir)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--allow-external"));
+}
+
+#[test]
+fn mmx002_t8_concurrent_turns_are_serialized() {
+    let s = start(A);
+    let barrier = Arc::new(Barrier::new(3));
+    let handles: Vec<_> = [B, C]
+        .into_iter()
+        .map(|source| {
+            let barrier = Arc::clone(&barrier);
+            let addr = s.addr;
+            std::thread::spawn(move || {
+                barrier.wait();
+                post(addr, source, "동시")
+            })
+        })
+        .collect();
+    barrier.wait();
+    for handle in handles {
+        assert_eq!(handle.join().unwrap()["exit"], 0);
+    }
+    let source = std::fs::read_to_string(s.dir.join("d.mmd")).unwrap();
+    assert!(source == B || source == C);
+    let state = get_json(s.addr, "/state");
+    assert_eq!(state["source"], source);
+    let hash = mmx::state::hex_sha256(source.as_bytes());
+    assert_eq!(file_json(&s.dir, "d.state.json")["source_sha256"], hash);
+}
+
+#[test]
+fn mmx002_t9_truncated_headers_do_not_spin() {
+    let s = start(A);
+    let mut stream = TcpStream::connect(s.addr).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write!(
+        stream,
+        "GET /state HTTP/1.1\r\nHost: localhost:{}\r\nX-Cut: yes",
+        s.addr.port()
+    )
+    .unwrap();
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply).unwrap();
+    assert!(String::from_utf8_lossy(&reply).contains("400 Bad Request"));
+    assert_eq!(request(s.addr, "GET", "/state", None).0, 200);
+}
+
+#[test]
+fn mmx002_t10_unterminated_large_header_is_bounded() {
+    let s = start(A);
+    let mut stream = TcpStream::connect(s.addr).unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let prefix = format!(
+        "GET / HTTP/1.1\r\nHost: localhost:{}\r\nX-Large: ",
+        s.addr.port()
+    );
+    stream.write_all(prefix.as_bytes()).unwrap();
+    for _ in 0..48 {
+        if stream.write_all(&vec![b'a'; 64 * 1024]).is_err() {
+            break;
+        }
+    }
+    drop(stream);
+    assert_eq!(request(s.addr, "GET", "/state", None).0, 200);
+}
+
+#[test]
+fn mmx002_t11_content_type_origin_and_host_checks() {
+    let s = start(A);
+    let body = json!({"source":B}).to_string();
+    let make = |extra: &str| {
+        format!(
+            "POST /turn HTTP/1.1\r\nHost: localhost:{}\r\n{extra}Content-Length: {}\r\n\r\n{body}",
+            s.addr.port(),
+            body.len()
+        )
+    };
+    assert_eq!(
+        raw_request(s.addr, &make("Content-Type: text/plain\r\n")).0,
+        415
+    );
+    assert_eq!(
+        raw_request(
+            s.addr,
+            &make(
+                "Content-Type: application/json; charset=utf-8\r\nOrigin: http://evil.example\r\n"
+            )
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        raw_request(
+            s.addr,
+            &make(&format!(
+                "Content-Type: application/json\r\nOrigin: http://localhost:{}\r\n",
+                s.addr.port()
+            ))
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        raw_request(s.addr, "GET /state HTTP/1.1\r\nHost: evil.example\r\n\r\n").0,
+        403
+    );
+}
+
+#[test]
+fn mmx002_t12_stale_base_seq_conflicts_without_write() {
+    let s = start(A);
+    assert_eq!(post(s.addr, B, "first")["exit"], 0);
+    let body = json!({"source":C,"base_seq":0}).to_string();
+    let wire = format!("POST /turn HTTP/1.1\r\nHost: localhost:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", s.addr.port(), body.len());
+    let (status, reply) = raw_request(s.addr, &wire);
+    assert_eq!(status, 409);
+    let value: Value = serde_json::from_slice(&reply).unwrap();
+    assert_eq!(value["conflict"], true);
+    assert_eq!(value["seq"], 1);
+    assert_eq!(value["state"]["source"], B);
+    assert_eq!(std::fs::read_to_string(s.dir.join("d.mmd")).unwrap(), B);
+}
+
+#[test]
+fn mmx002_t13_restart_changes_epoch_and_keeps_state() {
+    let first = start(A);
+    let old_epoch = sse_next(&mut sse_connect(first.addr))["epoch"]
+        .as_u64()
+        .unwrap();
+    let second = start_dir(first.dir.clone(), &[]);
+    let new_epoch = sse_next(&mut sse_connect(second.addr))["epoch"]
+        .as_u64()
+        .unwrap();
+    assert_ne!(old_epoch, new_epoch);
+    assert_eq!(get_json(second.addr, "/state")["epoch"], new_epoch);
+    assert_eq!(
+        get_json(second.addr, "/state")["nodes"],
+        file_json(&second.dir, "d.state.json")["nodes"]
+    );
+}
+
+#[test]
+fn mmx002_t14_loopback_alias_and_external_override() {
+    let base = start(A);
+    let local = start_dir(base.dir.clone(), &["--addr", "localhost:0"]);
+    assert!(local.addr.ip().is_loopback());
+    assert_eq!(request(local.addr, "GET", "/state", None).0, 200);
+    let external = start_dir(
+        base.dir.clone(),
+        &["--addr", "0.0.0.0:0", "--allow-external"],
+    );
+    assert_eq!(request(external.addr, "GET", "/state", None).0, 200);
+}

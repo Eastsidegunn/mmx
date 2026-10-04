@@ -1,10 +1,11 @@
 //! mmx core: parse, diff, state, emit. No harness names in here.
 
 pub mod diff;
-pub mod init;
 pub mod emit;
+pub mod init;
 pub mod model;
 pub mod render;
+pub mod serve;
 pub mod state;
 
 use std::path::{Path, PathBuf};

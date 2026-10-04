@@ -30,6 +30,15 @@ mmx render examples/diagram.mmd --by agent --note "Updated the delivery step" --
 
 Every successful render that detects a change writes the SVG, diff JSON, and state JSON alongside the diagram. The first render writes all three files as a baseline and prints nothing with `--print-if-changed`. The next changed render writes all three and prints the diff. A repeated render of unchanged bytes does nothing. Exit 2 writes a repairable parse/encoding error into the diff; fix the source and render again. When hooks are installed, notes for Edit/Write edits are not recorded: the hook renders first, so the agent's render with `--note` is a no-op. A command to add a note is planned for v1.
 
+## mmx serve
+
+```bash
+mmx serve diagram.mmd
+mmx serve diagram.mmd --addr 127.0.0.1:8080
+```
+
+The server binds to loopback by default. `--allow-external` permits an external bind and exposes the unauthenticated editor; use it only behind appropriate access controls. Request bodies are limited to 2 MiB.
+
 ## Integration
 
 `skills/mmx/` explains the turn routine and JSON schema. `adapters/claude/settings.json` and `adapters/codex/hooks.json` are opt-in hook examples; `adapters/mmx_hook.py` is their shared runner. Copy a hook file to your project's harness settings location and change its UserPromptSubmit `--diagram diagram.mmd` argument to that project's diagram path. The Claude example belongs at `.claude/settings.json` and uses `CLAUDE_PROJECT_DIR` to find the runner. The Codex example belongs at `.codex/hooks.json`; set its runner command to an absolute path as described in `adapters/codex/README.md`. `adapters/AGENTS.md` gives the same routine for harnesses without hooks. `examples/` contains a starting diagram. `editor/` holds mmx-editor, a dependency-free embeddable component for editing the rendered diagram in place (see `editor/README.md`).

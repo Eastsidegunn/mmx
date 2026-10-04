@@ -772,7 +772,6 @@
     rootEl.querySelector(".send").addEventListener("click", function () {
       if (opsCount() === 0) { setStatus(S.nothingToSend); return; }
       if (opts.onSubmit) opts.onSubmit({ source: serialize(), note: noteEl.value.trim(), ops: opsCount() });
-      noteEl.value = "";
     });
 
     function onResize() { if (model) render(); }
@@ -797,6 +796,7 @@
       },
       getSource: serialize,
       getNote: function () { return noteEl.value.trim(); },
+      setNote: function (value) { noteEl.value = value; },
       pendingOps: opsCount,
       destroy: function () {
         destroyed = true;
@@ -851,6 +851,7 @@
       });
       El.prototype.getSource = function () { return this._editor ? this._editor.getSource() : ""; };
       El.prototype.getNote = function () { return this._editor ? this._editor.getNote() : ""; };
+      El.prototype.setNote = function (value) { if (this._editor) this._editor.setNote(value); };
       El.prototype.pendingOps = function () { return this._editor ? this._editor.pendingOps() : 0; };
       return El;
     })();

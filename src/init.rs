@@ -36,7 +36,10 @@ pub fn run_init(hooks_diagram: Option<PathBuf>) -> anyhow::Result<()> {
     let skill_dir = home_dir()?.join(".claude").join("skills").join("mmx");
     println!("Installing the mmx agent skill (machine-wide):");
     write(&skill_dir.join("SKILL.md"), SKILL_MD)?;
-    write(&skill_dir.join("references").join("diff-schema.md"), DIFF_SCHEMA_MD)?;
+    write(
+        &skill_dir.join("references").join("diff-schema.md"),
+        DIFF_SCHEMA_MD,
+    )?;
 
     // 2) Optional per-project Claude Code hooks.
     match hooks_diagram {

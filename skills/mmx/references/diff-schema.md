@@ -11,6 +11,7 @@ Every written diff has these fields:
 | `mmx_diff_version` | integer | Schema version, currently `1`. |
 | `format` | string | `"mermaid"` in v0. |
 | `by` | string | `--by` value, passed through; default `"unknown"`. It records the render caller, not proven edit authorship. |
+
 | `note` | string or null | `--note` value, passed through; null when absent. Stored only in diff.json. |
 | `baseline` | boolean | True when no usable previous state exists. All semantic diff arrays are empty. |
 | `source_changed` | boolean | False on baseline; true on every written non-baseline turn, including errors and text-only changes. |
@@ -21,6 +22,8 @@ Every written diff has these fields:
 | `stats` | object or null | Layout summary on successful render; null on error. |
 | `warnings` | string array | Usually empty. State-recovery warnings appear here. |
 | `error` | object or null | Parse/encoding error on exit 2; null otherwise. |
+
+`mmx serve` uses `by: "serve"` for its initial baseline.
 
 `nodes.added` and `nodes.removed` contain node ID strings. `nodes.changed` entries are `{"id": string, "field": "label" | "shape", "old": string, "new": string}`. A renamed ID is reported as remove plus add.
 

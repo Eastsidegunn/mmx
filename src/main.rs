@@ -57,11 +57,33 @@ enum Command {
         #[arg(long)]
         print_if_changed: bool,
     },
+    /// Open a local browser cockpit for a diagram
+    Serve {
+        /// Input diagram file (.mmd)
+        input: PathBuf,
+        /// Listen address (default: 127.0.0.1:0)
+        #[arg(long, default_value = "127.0.0.1:0")]
+        addr: String,
+        /// Permit listening on a non-loopback address
+        #[arg(long)]
+        allow_external: bool,
+    },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::Serve {
+            input,
+            addr,
+            allow_external,
+        } => match mmx::serve::run(input, &addr, allow_external) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("mmx serve: {e:#}");
+                ExitCode::from(1)
+            }
+        },
         Command::Init { hooks } => match mmx::init::run_init(hooks) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
