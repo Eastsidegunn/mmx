@@ -92,6 +92,448 @@
 
   function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
 
+  // ---- source patching ----
+  // Edits are applied to the confirmed source text instead of regenerating
+  // it, so everything the editor does not model — comments, subgraphs,
+  // dashed/thick arrows, classDef/style, line order — survives a turn.
+  // Statements are parsed just enough to locate nodes and links; anything
+  // that cannot be located safely makes patchSource throw, and the caller
+  // falls back to full serialization (flagged lossy).
+  var KEYWORD_RE = /^(flowchart|graph|subgraph|end|classDef|class|style|linkStyle|click|direction|accTitle|accDescr)\b/;
+  var ARROWISH_RE = /--|==|-\.|~~~/;
+  var ID_RE = /[\w\u0080-￿]+(?:[-.](?=[\w\u0080-￿])[\w\u0080-￿]+)*/y;
+  var CLS_RE = /:::[\w-]+/y;
+  var AMP_RE = /\s*&\s*/y;
+  var TEXT_LINKS = [
+    { re: /(\s*)(<?)--\s+([^|]*?)\s+(-{2,}[>ox]?)(\s*)/y, type: "normal" },
+    { re: /(\s*)(<?)-\.\s+([^|]*?)\s+(\.-+[>ox]?)(\s*)/y, type: "dotted" },
+    { re: /(\s*)(<?)==\s+([^|]*?)\s+(={2,}[>ox]?)(\s*)/y, type: "thick" },
+  ];
+  var PLAIN_LINK = /(\s*)(<?)(-{2,}[>ox]?|-\.+-[>ox]?|={2,}[>ox]?|~{3,})(\s*)(?:\|([^|]*)\|(\s*))?/y;
+
+  function PatchFail(why) { this.why = why; }
+
+  function plainArrow(type, open, lt) {
+    var core = type === "dotted" ? (open ? "-.-" : "-.->")
+      : type === "thick" ? (open ? "===" : "==>")
+      : type === "invisible" ? "~~~"
+      : (open ? "---" : "-->");
+    return (lt || "") + core;
+  }
+  function linkType(core) {
+    if (core.charAt(0) === "~") return "invisible";
+    if (core.charAt(0) === "=") return "thick";
+    if (core.charAt(1) === ".") return "dotted";
+    return "normal";
+  }
+
+  function scanShape(s, i) {
+    var c = s.charAt(i);
+    if ("([{>".indexOf(c) < 0) return null;
+    var stack = [], j = i;
+    for (; j < s.length; j++) {
+      var ch = s.charAt(j);
+      if (ch === '"') {
+        var q = s.indexOf('"', j + 1);
+        if (q < 0) return null;
+        j = q;
+        continue;
+      }
+      if (j === i && ch === ">") { stack.push("]"); continue; }
+      if (ch === "(") stack.push(")");
+      else if (ch === "[") stack.push("]");
+      else if (ch === "{") stack.push("}");
+      else if (ch === ")" || ch === "]" || ch === "}") {
+        if (stack.pop() !== ch) return null;
+        if (!stack.length) break;
+      }
+    }
+    if (j >= s.length) return null;
+    var end = j + 1;
+    var openLen = 0;
+    while (openLen < 3 && "([{/\\>".indexOf(s.charAt(i + openLen)) >= 0) openLen++;
+    var innerStart = i + openLen, innerEnd = end - openLen;
+    if (innerEnd < innerStart) { innerStart = i + 1; innerEnd = end - 1; }
+    var inner = s.slice(innerStart, innerEnd).trim();
+    return {
+      end: end, innerStart: innerStart, innerEnd: innerEnd,
+      quoted: inner.length >= 2 && inner.charAt(0) === '"' && inner.charAt(inner.length - 1) === '"',
+    };
+  }
+
+  function parseNode(s, p) {
+    ID_RE.lastIndex = p;
+    var m = ID_RE.exec(s);
+    if (!m) return null;
+    var node = { id: m[0], start: p, idEnd: p + m[0].length, end: p + m[0].length, shape: null };
+    var sh = scanShape(s, node.end);
+    if (sh) { node.shape = sh; node.end = sh.end; }
+    CLS_RE.lastIndex = node.end;
+    var c = CLS_RE.exec(s);
+    if (c) node.end += c[0].length;
+    return node;
+  }
+  function parseGroup(s, p) {
+    var first = parseNode(s, p);
+    if (!first) return null;
+    var g = { nodes: [first], start: p, end: first.end };
+    for (;;) {
+      AMP_RE.lastIndex = g.end;
+      var a = AMP_RE.exec(s);
+      if (!a) break;
+      var n = parseNode(s, g.end + a[0].length);
+      if (!n) return null;
+      g.nodes.push(n);
+      g.end = n.end;
+    }
+    return g;
+  }
+  function parseLink(s, p) {
+    for (var t = 0; t < TEXT_LINKS.length; t++) {
+      var f = TEXT_LINKS[t];
+      f.re.lastIndex = p;
+      var m = f.re.exec(s);
+      if (m) {
+        return {
+          start: p, end: p + m[0].length, lead: m[1], trail: m[5], lt: m[2],
+          type: f.type, open: !/[>ox]$/.test(m[4]), label: m[3], pipe: false, core: null,
+        };
+      }
+    }
+    PLAIN_LINK.lastIndex = p;
+    var pm = PLAIN_LINK.exec(s);
+    if (!pm) return null;
+    var hasPipe = pm[5] !== undefined;
+    return {
+      start: p, end: p + pm[0].length, lead: pm[1],
+      trail: hasPipe ? pm[6] : pm[4], lt: pm[2],
+      type: linkType(pm[3]), open: !/[>ox]$/.test(pm[3]),
+      label: hasPipe ? pm[5] : null, pipe: hasPipe, core: pm[2] + pm[3],
+      midWs: hasPipe ? pm[4] : "",
+    };
+  }
+  function parseStatement(s, start, end) {
+    var p = start;
+    while (p < end && /\s/.test(s.charAt(p))) p++;
+    var g = parseGroup(s, p);
+    if (!g || g.end > end) return null;
+    var st = { groups: [g], links: [] };
+    for (;;) {
+      var l = parseLink(s, g.end);
+      if (!l || l.end > end) break;
+      var g2 = parseGroup(s, l.end);
+      if (!g2 || g2.end > end) return null;
+      st.links.push(l);
+      st.groups.push(g2);
+      g = g2;
+    }
+    if (s.slice(g.end, end).trim() !== "") return null;
+    return st;
+  }
+  // Split a line into ';'-separated statement ranges, outside quotes,
+  // brackets and |edge labels|.
+  function statementRanges(s) {
+    var out = [], depth = 0, inPipe = false, start = 0;
+    for (var i = 0; i < s.length; i++) {
+      var ch = s.charAt(i);
+      if (ch === '"') { var q = s.indexOf('"', i + 1); if (q < 0) break; i = q; continue; }
+      if (ch === "|") inPipe = !inPipe;
+      else if (!inPipe && "([{".indexOf(ch) >= 0) depth++;
+      else if (!inPipe && ")]}".indexOf(ch) >= 0) depth--;
+      else if (ch === ";" && depth === 0 && !inPipe) { out.push([start, i]); start = i + 1; }
+    }
+    out.push([start, s.length]);
+    return out;
+  }
+
+  function declOf(id, n) {
+    var l = quoteLabel((n && n.label) || id);
+    return (n && n.shape) === "Diamond" ? id + "{" + l + "}" : id + "[" + l + "]";
+  }
+  function fmtLabel(label, quoted) {
+    var l = label.replace(/[\r\n]+/g, " ").trim();
+    if (quoted) return '"' + l.replace(/"/g, "'") + '"';
+    return /[\[\]{}()|"<>#;]/.test(l) ? '"' + l.replace(/"/g, "'") + '"' : l;
+  }
+
+  function patchSource(source, model) {
+    var alive = function (id) { var n = model.nodes[id]; return n && !n.deleted; };
+    var deletedNodes = {}, renamed = {}, fresh = [];
+    Object.keys(model.nodes).forEach(function (id) {
+      var n = model.nodes[id];
+      if (n.fresh) { if (!n.deleted) fresh.push(id); return; }
+      if (n.deleted) deletedNodes[id] = true;
+      else if (n.modified) renamed[id] = n.label;
+    });
+    var delKeys = {}, relabel = {}, newEdges = [], edgeOps = false;
+    model.edges.forEach(function (e) {
+      if (e.pending) {
+        if (!e.deleted && alive(e.from) && alive(e.to)) newEdges.push(e);
+        return;
+      }
+      if (e.deleted) { delKeys[e.key] = true; edgeOps = true; }
+      else if (e.labelChanged) { relabel[e.key] = e.label; edgeOps = true; }
+    });
+    var anyDeleted = Object.keys(deletedNodes).length > 0;
+    if (!edgeOps && !anyDeleted && !Object.keys(renamed).length && !newEdges.length && !fresh.length) {
+      return source;
+    }
+
+    var lines = source.split("\n");
+    var front = lines[0] && lines[0].trim() === "---";
+    var skip = {}; // front matter / comment lines
+    var stmts = [], opaque = [], linkStyles = [];
+    lines.forEach(function (line, li) {
+      var t = line.trim();
+      if (front) { skip[li] = true; if (li > 0 && t === "---") front = false; return; }
+      if (!t || t.indexOf("%%") === 0) { skip[li] = true; return; }
+      // Keywords are judged per ';' segment: `flowchart LR; A --> B` still
+      // defines an edge that counts toward every later #k.
+      statementRanges(line).forEach(function (r) {
+        var seg = line.slice(r[0], r[1]).trim();
+        if (!seg) return;
+        if (KEYWORD_RE.test(seg)) {
+          if (/^linkStyle\s/.test(seg) && !/^linkStyle\s+default\b/.test(seg)) linkStyles.push(seg);
+          return;
+        }
+        var st = parseStatement(line, r[0], r[1]);
+        if (st) { st.line = li; st.range = r; stmts.push(st); }
+        else opaque.push(seg);
+      });
+    });
+    if (edgeOps && opaque.some(function (t) { return ARROWISH_RE.test(t); })) {
+      throw new PatchFail("unparsed statement may hold edges");
+    }
+    Object.keys(deletedNodes).concat(Object.keys(renamed)).forEach(function (id) {
+      var re = new RegExp("(^|[^\\w\\u0080-\\uFFFF])" + id.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&") + "($|[^\\w\\u0080-\\uFFFF])");
+      if (opaque.some(function (t) { return re.test(t); })) throw new PatchFail("node " + id + " in unparsed statement");
+    });
+
+    // Edge occurrences in source order give each link its model key, and
+    // their global order is what `linkStyle <index>` refers to.
+    var seenPair = {}, keyOf = new Map(), edgeOrder = [], invisibleLinks = false;
+    stmts.forEach(function (st) {
+      st.links.forEach(function (l, i) {
+        // The renderer does not list `~~~` links as edges, so they take no
+        // #k slot (and no model key).
+        if (l.type === "invisible") { invisibleLinks = true; return; }
+        var group = st.groups[i].nodes.length > 1 || st.groups[i + 1].nodes.length > 1;
+        st.groups[i].nodes.forEach(function (a) {
+          st.groups[i + 1].nodes.forEach(function (b) {
+            var pk = a.id + "\u0000" + b.id;
+            var k = seenPair[pk] || 0;
+            seenPair[pk] = k + 1;
+            var key = a.id + "->" + b.id + "#" + k;
+            edgeOrder.push({ key: key, a: a.id, b: b.id });
+            if (group && (delKeys[key] || key in relabel || deletedNodes[a.id] || deletedNodes[b.id])) {
+              throw new PatchFail("grouped (&) edge " + key);
+            }
+            if (!group) keyOf.set(l, key);
+          });
+        });
+      });
+    });
+    var known = {};
+    keyOf.forEach(function (key) { known[key] = true; });
+
+    // linkStyle indices shift when edges disappear: map old -> new.
+    var linkIndexMap = null;
+    var removesEdges = edgeOrder.some(function (e) {
+      return delKeys[e.key] || deletedNodes[e.a] || deletedNodes[e.b];
+    });
+    if (removesEdges && linkStyles.length) {
+      if (invisibleLinks || opaque.some(function (t) { return ARROWISH_RE.test(t); })) {
+        throw new PatchFail("linkStyle indices with invisible or unparsed links");
+      }
+      linkIndexMap = {};
+      var next = 0;
+      edgeOrder.forEach(function (e, i) {
+        if (!(delKeys[e.key] || deletedNodes[e.a] || deletedNodes[e.b])) linkIndexMap[i] = next++;
+      });
+    }
+    Object.keys(delKeys).concat(Object.keys(relabel)).forEach(function (key) {
+      if (!known[key]) throw new PatchFail("edge " + key + " not located");
+    });
+
+    // Where a renamed node's label lives: every shaped occurrence, else the
+    // first bare one.
+    var declSites = new Set();
+    Object.keys(renamed).forEach(function (id) {
+      var shaped = [], bare = null;
+      stmts.forEach(function (st) {
+        st.groups.forEach(function (g) {
+          g.nodes.forEach(function (n) {
+            if (n.id !== id) return;
+            if (n.shape) shaped.push(n); else if (!bare) bare = n;
+          });
+        });
+      });
+      if (shaped.length) shaped.forEach(function (n) { declSites.add(n); });
+      else if (bare) declSites.add(bare);
+      else throw new PatchFail("node " + id + " not located");
+    });
+
+    function nodeText(line, n) {
+      if (!declSites.has(n)) return line.slice(n.start, n.end);
+      var label = renamed[n.id];
+      if (n.shape) {
+        return line.slice(n.start, n.shape.innerStart) + fmtLabel(label, n.shape.quoted) +
+          line.slice(n.shape.innerEnd, n.end);
+      }
+      return n.id + "[" + fmtLabel(label, false) + "]" + line.slice(n.idEnd, n.end);
+    }
+    function groupText(line, g) {
+      var out = "", p = g.start;
+      g.nodes.forEach(function (n) { out += line.slice(p, n.start) + nodeText(line, n); p = n.end; });
+      return out;
+    }
+    function linkText(line, l) {
+      var key = keyOf.get(l);
+      if (!key || !(key in relabel)) return line.slice(l.start, l.end);
+      var lbl = relabel[key] ? edgeLabelText(relabel[key]) : "";
+      var core = l.core || plainArrow(l.type, l.open, l.lt);
+      return (l.lead || " ") + core + (lbl ? "|" + lbl + "|" : "") + (l.trail || " ");
+    }
+
+    // Rebuild touched statements: removed links split a chain into
+    // fragments; a lone bare node fragment is dropped unless it is that
+    // node's only remaining mention.
+    var lineEdits = {}; // line -> [{range, texts[]}]
+    var survivors = {}, bareCandidates = [];
+    stmts.forEach(function (st) {
+      var line = lines[st.line];
+      var hasDeleted = false;
+      st.groups.forEach(function (g) {
+        g.nodes.forEach(function (n) {
+          if (!deletedNodes[n.id]) return;
+          hasDeleted = true;
+          if (g.nodes.length > 1) throw new PatchFail("deleted node " + n.id + " inside & group");
+        });
+      });
+      var removed = st.links.map(function (l, i) {
+        var key = keyOf.get(l);
+        var a = st.groups[i].nodes[0].id, b = st.groups[i + 1].nodes[0].id;
+        return !!(key && delKeys[key]) || !!deletedNodes[a] || !!deletedNodes[b];
+      });
+      var frags = [], cur = [0];
+      for (var i = 0; i < st.links.length; i++) {
+        if (removed[i]) { frags.push(cur); cur = [i + 1]; } else cur.push(i + 1);
+      }
+      frags.push(cur);
+      st.frags = frags.map(function (gs) {
+        var text = "";
+        gs.forEach(function (gi, j) {
+          if (j > 0) text += linkText(line, st.links[gi - 1]);
+          text += groupText(line, st.groups[gi]);
+        });
+        var f = { text: text, keep: true, ids: [] };
+        gs.forEach(function (gi) { st.groups[gi].nodes.forEach(function (n) { f.ids.push(n.id); }); });
+        if (gs.length === 1) {
+          var n = st.groups[gs[0]].nodes[0];
+          if (deletedNodes[n.id]) f.keep = false;
+          else if (!n.shape && !declSites.has(n) && removed.some(Boolean)) {
+            f.keep = false;
+            f.bare = n.id;
+            bareCandidates.push(f);
+          }
+        }
+        return f;
+      });
+      st.changed = hasDeleted || removed.some(Boolean) ||
+        st.links.some(function (l) { var k = keyOf.get(l); return k && k in relabel; }) ||
+        st.groups.some(function (g) { return g.nodes.some(function (n) { return declSites.has(n); }); });
+      st.frags.forEach(function (f) {
+        if (f.keep) f.ids.forEach(function (id) { survivors[id] = true; });
+      });
+    });
+    bareCandidates.forEach(function (f) {
+      if (!survivors[f.bare] && alive(f.bare)) { f.keep = true; survivors[f.bare] = true; }
+    });
+    stmts.forEach(function (st) {
+      if (!st.changed) return;
+      (lineEdits[st.line] = lineEdits[st.line] || []).push({
+        range: st.range,
+        start: st.groups[0].start,
+        end: st.groups[st.groups.length - 1].end,
+        texts: st.frags.filter(function (f) { return f.keep; }).map(function (f) { return f.text; }),
+      });
+    });
+
+    // Keyword segments a deletion touches: style/click of a deleted node go,
+    // class lists are pruned, linkStyle indices follow the surviving edges.
+    // Returns the new segment text, or null to drop it.
+    function keywordSeg(seg) {
+      var sm = /^(style|click)\s+(\S+)/.exec(seg);
+      if (sm && deletedNodes[sm[2]]) return null;
+      var cm = /^class\s+(\S+)(\s+.*)$/.exec(seg);
+      if (cm && anyDeleted) {
+        var ids = cm[1].split(","), left = ids.filter(function (id) { return !deletedNodes[id]; });
+        if (!left.length) return null;
+        if (left.length !== ids.length) return "class " + left.join(",") + cm[2];
+      }
+      var lm = /^linkStyle\s+(\d+(?:\s*,\s*\d+)*)(\s+.*)$/.exec(seg);
+      if (lm && linkIndexMap) {
+        var mapped = lm[1].split(",").map(function (i) { return linkIndexMap[+i.trim()]; })
+          .filter(function (v) { return v !== undefined; });
+        if (!mapped.length) return null;
+        return "linkStyle " + mapped.join(",") + lm[2];
+      }
+      return seg;
+    }
+
+    var out = [];
+    lines.forEach(function (line, li) {
+      if (skip[li]) { out.push(line); return; }
+      var edits = lineEdits[li] || [];
+      var ranges = statementRanges(line).filter(function (r) { return line.slice(r[0], r[1]).trim(); });
+      var indent = /^\s*/.exec(line)[0];
+      var segs = [], changed = false;
+      ranges.forEach(function (r) {
+        var seg = line.slice(r[0], r[1]).trim();
+        var ed = edits.filter(function (e) { return e.range[0] === r[0]; })[0];
+        if (ed) { changed = true; segs.push({ texts: ed.texts, ed: ed }); return; }
+        if (KEYWORD_RE.test(seg)) {
+          var k = keywordSeg(seg);
+          if (k !== seg) changed = true;
+          if (k !== null) segs.push({ texts: [k] });
+          return;
+        }
+        segs.push({ texts: [seg] });
+      });
+      if (!changed) { out.push(line); return; }
+      if (ranges.length === 1 && segs.length === 1 && segs[0].ed && segs[0].texts.length === 1) {
+        // In-place: everything around the statement stays byte-identical.
+        var ed0 = segs[0].ed;
+        out.push(line.slice(0, ed0.start) + ed0.texts[0] + line.slice(ed0.end));
+      } else if (ranges.length === 1) {
+        segs.forEach(function (s) { s.texts.forEach(function (x) { out.push(indent + x.trim()); }); });
+      } else {
+        var parts = [];
+        segs.forEach(function (s) { s.texts.forEach(function (x) { parts.push(x.trim()); }); });
+        if (parts.length) out.push(indent + parts.join("; "));
+      }
+    });
+
+    var declared = {};
+    function ref(id) {
+      var n = model.nodes[id];
+      if (n && n.fresh && !declared[id]) { declared[id] = true; return declOf(id, n); }
+      return id;
+    }
+    var tail = [];
+    newEdges.forEach(function (e) {
+      var l = e.label ? edgeLabelText(e.label) : "";
+      tail.push("    " + ref(e.from) + " " + (l ? "-->|" + l + "|" : "-->") + " " + ref(e.to));
+    });
+    fresh.forEach(function (id) { if (!declared[id]) tail.push("    " + declOf(id, model.nodes[id])); });
+    if (tail.length) {
+      while (out.length && out[out.length - 1] === "") out.pop();
+      out = out.concat(tail);
+      out.push("");
+    }
+    return out.join("\n");
+  }
+
   function quoteLabel(l) {
     l = l.replace(/[\r\n]+/g, " ").trim();
     return /[\[\]{}()|"<>#;]/.test(l) ? '"' + l.replace(/"/g, "'") + '"' : l;
@@ -203,9 +645,25 @@
       sendBtn.textContent = n > 0 ? S.sendWithCount(n) : S.send;
       revertBtn.disabled = n === 0 && !manual;
     }
+    // The text a send would produce: the confirmed source patched with the
+    // pending operations; full serialization only when patching cannot
+    // locate something (lossy: formatting outside the model may be lost).
+    function currentSource() {
+      if (!model) return { source: "", lossy: false };
+      if (!baseline || !baseline.source) return { source: serialize(), lossy: true };
+      try {
+        return { source: patchSource(baseline.source, model), lossy: false };
+      } catch (e) {
+        if (!(e instanceof PatchFail)) throw e;
+        return { source: serialize(), lossy: true, why: e.why };
+      }
+    }
     function announce() {
       idleStatus();
-      if (opts.onChange) opts.onChange({ source: serialize(), ops: opsCount() });
+      if (opts.onChange) {
+        var cur = currentSource();
+        opts.onChange({ source: cur.source, ops: opsCount(), lossy: cur.lossy });
+      }
     }
 
     // ---- serialization ----
@@ -696,6 +1154,14 @@
           document.removeEventListener("pointermove", onMove);
           document.removeEventListener("pointerup", onUp);
           el.classList.remove("dragging");
+          if (moved) {
+            nudgeClear(id);
+            var nb = nodeBox(id);
+            if (nb) { el.style.left = nb.l + "px"; el.style.top = nb.t + "px"; }
+            moveNodeVisuals(id);
+            drawOverlayEdges();
+            if (handleEl) { handleEl.remove(); handleEl = null; }
+          }
           if (moved || !alive(id)) {
             // A drag, or the undelete click on a dimmed node, never counts
             // toward a double-click.
@@ -718,6 +1184,31 @@
         document.addEventListener("pointerup", onUp);
       });
       el.addEventListener("pointerenter", function () { showHandle(id); });
+    }
+
+    // A dropped node that lands on a neighbor is pushed out along the axis
+    // of least overlap, so placements never hide another node.
+    var NUDGE_GAP = 8;
+    function nudgeClear(id) {
+      var n = model.nodes[id];
+      for (var pass = 0; pass < 6; pass++) {
+        var b = nodeBox(id);
+        if (!b) return;
+        var hit = null;
+        Object.keys(model.nodes).forEach(function (oid) {
+          if (hit || oid === id || !alive(oid)) return;
+          var o = nodeBox(oid);
+          if (!o) return;
+          if (b.l < o.l + o.w + NUDGE_GAP && o.l < b.l + b.w + NUDGE_GAP &&
+              b.t < o.t + o.h + NUDGE_GAP && o.t < b.t + b.h + NUDGE_GAP) hit = o;
+        });
+        if (!hit) return;
+        var right = hit.l + hit.w + NUDGE_GAP - b.l, left = b.l + b.w + NUDGE_GAP - hit.l;
+        var down = hit.t + hit.h + NUDGE_GAP - b.t, up = b.t + b.h + NUDGE_GAP - hit.t;
+        var m = Math.min(right, left, down, up);
+        n.tx = b.l + (m === right ? right : m === left ? -left : 0);
+        n.ty = b.t + (m === down ? down : m === up ? -up : 0);
+      }
     }
 
     var handleEl = null;
@@ -966,11 +1457,8 @@
       var note = noteEl.value.trim();
       var ops = opsCount();
       if (ops === 0 && !note) { setStatus(S.nothingToSend); return; }
-      // A note-only turn must not rewrite the diagram text: serialize()
-      // normalizes (drops comments, subgraphs, dashed arrows, line order),
-      // so with zero operations the confirmed source goes out verbatim.
-      var source = ops === 0 && baseline && baseline.source ? baseline.source : serialize();
-      if (opts.onSubmit) opts.onSubmit({ source: source, note: note, ops: ops });
+      var cur = currentSource();
+      if (opts.onSubmit) opts.onSubmit({ source: cur.source, note: note, ops: ops, lossy: cur.lossy });
     });
 
     function onResize() { if (model) render(); }
@@ -996,7 +1484,7 @@
         idleStatus();
         updateSendState();
       },
-      getSource: serialize,
+      getSource: function () { return currentSource().source; },
       getNote: function () { return noteEl.value.trim(); },
       setNote: function (value) { noteEl.value = value; },
       pendingOps: opsCount,
@@ -1060,5 +1548,5 @@
     if (!customElements.get("mmx-editor")) customElements.define("mmx-editor", MmxEditorElement);
   }
 
-  return { mount: mount, version: "0.4.0" };
+  return { mount: mount, patchSource: patchSource, PatchFail: PatchFail, version: "0.5.0" };
 });

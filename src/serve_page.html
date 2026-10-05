@@ -5,27 +5,36 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>mmx 조종석</title>
   <style>
-    body { font: 15px/1.5 system-ui,sans-serif; color:#23272e; max-width:1100px; margin:24px auto; padding:0 16px; }
+    body { font: 15px/1.5 system-ui,sans-serif; color:#23272e; max-width:1440px; margin:24px auto; padding:0 16px; }
+    .layout { display:grid; grid-template-columns:minmax(0,1fr); gap:20px; }
+    @media (min-width: 1100px) { .layout { grid-template-columns:minmax(0,1fr) 280px; } }
+    aside { min-width:0; }
+    @media (min-width: 1100px) { aside { max-height:calc(min(72vh, 820px) + 80px); overflow-y:auto; } }
     header { display:flex; align-items:baseline; gap:20px; flex-wrap:wrap; margin-bottom:16px; }
     h1 { font-size:1.3rem; margin:0; }
     #turn { color:#555; }
     #status { min-height:1.5em; margin:10px 0; color:#9b351e; white-space:pre-wrap; }
     #status:not(:empty) { background:#fff3ec; border-left:3px solid #b04a17; padding:6px 10px; border-radius:0 6px 6px 0; }
     mmx-editor { --mmx-height: min(72vh, 820px); }
-    #history { margin:14px 0 0; padding:0; list-style:none; font-size:13.5px; color:#444; }
+    #history { margin:4px 0 0; padding:0; list-style:none; font-size:13.5px; color:#444; }
     #history li { padding:4px 0; border-top:1px solid #eee8df; }
     #history .who { font-weight:600; color:#23272e; }
     #history .when { color:#999; margin-left:8px; font-size:12px; }
-    #history-title { margin:18px 0 4px; font-size:13px; color:#888; text-transform:none; }
+    #history-title { margin:0 0 4px; font-size:13px; color:#888; }
+    #history #history-empty { color:#999; border-top:none; }
   </style>
 </head>
 <body>
   <header><h1>mmx 조종석</h1><span id="turn">불러오는 중…</span></header>
   <div id="status" role="status" aria-live="polite"></div>
   <button id="load-current" hidden>현 상태 불러오기</button>
-  <mmx-editor></mmx-editor>
-  <div id="history-title" hidden>턴 기록 (이 창에서 본 것)</div>
-  <ul id="history"></ul>
+  <div class="layout">
+    <mmx-editor></mmx-editor>
+    <aside>
+      <div id="history-title">턴 기록 (이 창에서 본 것)</div>
+      <ul id="history"><li id="history-empty">아직 없음 — 보내거나 받은 턴이 여기 쌓입니다</li></ul>
+    </aside>
+  </div>
   <script src="/editor.js"></script>
   <script>
     const ed = document.querySelector('mmx-editor');
@@ -48,7 +57,6 @@
     let waitingSeq = -1;
     let sending = false;
     const history = document.querySelector('#history');
-    const historyTitle = document.querySelector('#history-title');
     const seenTurns = new Set();
     function logTurn(s) {
       // Page-local record of the turns this window has seen, latest first.
@@ -65,9 +73,9 @@
       when.className = 'when';
       when.textContent = `턴 ${s.seq} · ${new Date().toLocaleTimeString('ko-KR')}`;
       li.append(who, document.createTextNode(s.note ? ` — ${s.note}` : ' — (메모 없음)'), when);
+      document.querySelector('#history-empty')?.remove();
       history.prepend(li);
       while (history.children.length > 30) history.lastChild.remove();
-      historyTitle.hidden = false;
     }
     function showState(s) {
       ed.load(s);
@@ -121,6 +129,9 @@
         } else {
           showState({...result.state, svg:result.svg});
           ed.setNote('');
+          if (event.detail.lossy) {
+            status.textContent = '주의: 이 편집은 원문 그대로 고칠 수 없는 구문(& 묶음 등)에 걸려 그림 텍스트를 다시 썼습니다 — 점선·주석 등 일부 서식이 사라졌을 수 있습니다';
+          }
         }
       } catch (error) { status.textContent = error.message; }
       finally {

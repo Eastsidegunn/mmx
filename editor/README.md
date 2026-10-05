@@ -19,7 +19,7 @@ makes it embeddable anywhere.
   const ed = document.getElementById("ed");
   ed.load({svg, nodes, edges, source});   // from `mmx render` + state.json
   ed.addEventListener("mmx-submit", e => {
-    // e.detail = {source, note, ops} — persist it, run
+    // e.detail = {source, note, ops, lossy} — persist it, run
     // `mmx render --by human --note ...`, then push the fresh render back:
     ed.load(newRender);                    // partial update, no page reload
   });
@@ -46,7 +46,7 @@ Works as a plain tag in any framework (React, Vue, Svelte, none). Optional
     edges:  state.edges,  // from <stem>.state.json (from/to/label)
     source: mmdText,      // the mermaid source of that render
     onSubmit(r) {
-      // r = {source, note, ops} — the user pressed Send.
+      // r = {source, note, ops, lossy} — the user pressed Send.
       // Host's job: persist r.source, run `mmx render --by human --note r.note`,
       // then feed the fresh render back via editor.update(...).
     },
@@ -87,19 +87,27 @@ positions belong to the renderer, not the source.
 - **Feed it trusted SVG only.** The module injects the `svg` string into the
   DOM as-is. It is designed for mmx's own render output; passing SVG from an
   untrusted source is an XSS risk the module does not defend against.
-- Labels are normalized on serialization: newlines become spaces, `"` inside
-  a quoted label becomes `'`, and `|` in edge labels is dropped (all three
-  would change the mermaid parse). The flowchart direction (`TD`, `LR`, ...)
-  of the confirmed source is preserved.
+- **Edits patch the source; they do not regenerate it.** A rename rewrites
+  only that node's label (bracket shape kept), a deletion removes only the
+  affected links and declarations, a label change rewrites only that link
+  (dashed stays dashed, thick stays thick), and new nodes/edges are appended.
+  Comments, subgraphs, arrow styles, `classDef`/`class`/`style` and line
+  order survive. When an edit touches something the patcher cannot locate
+  safely (an `&` group, a statement it cannot parse), it falls back to full
+  serialization and reports `lossy: true` in `mmx-submit`/`mmx-change`, so the
+  host can warn. Deleting edges renumbers edges, so `linkStyle <index>` lines
+  may then point at different edges.
+- Labels are normalized when written: newlines become spaces, `"` inside a
+  quoted label becomes `'`, and `|` in edge labels is dropped (all three
+  would change the mermaid parse).
 - Shadow DOM is required for style isolation. In an environment without it,
   the module still runs but its styles apply to the whole page.
 
-- Serialization targets the flowchart subset (Rectangle/Diamond shapes,
-  labeled edges). Comments and style directives in the original source are
-  not preserved by direct-manipulation edits; hosts that need them should
-  offer raw-source editing as a separate path.
+- Direct manipulation targets flowcharts. New nodes are written as
+  rectangles (`id[label]`).
 - Dragging a node is a temporary placement: only the edges touching moved
   nodes are redrawn as overlay lines; the rest of the real rendering stays.
+  A node dropped onto a neighbor is nudged clear of it.
   Positions are never serialized — send or a new load snaps back to the
   renderer's layout ("auto layout" undoes it immediately).
 - Double-click a node to rename it in place (single click opens the
