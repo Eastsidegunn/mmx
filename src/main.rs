@@ -153,6 +153,7 @@ fn main() -> ExitCode {
                 out_diff: diff_out.unwrap_or_else(|| sibling(&input, "diff.json")),
                 out_state,
                 print_if_changed,
+                force_turn: false,
                 input,
             };
 

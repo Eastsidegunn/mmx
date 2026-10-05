@@ -98,6 +98,16 @@ positions belong to the renderer, not the source.
   labeled edges). Comments and style directives in the original source are
   not preserved by direct-manipulation edits; hosts that need them should
   offer raw-source editing as a separate path.
+- Dragging a node is a temporary placement: only the edges touching moved
+  nodes are redrawn as overlay lines; the rest of the real rendering stays.
+  Positions are never serialized — send or a new load snaps back to the
+  renderer's layout ("auto layout" undoes it immediately).
+- Double-click a node to rename it in place (single click opens the
+  edit/delete menu). The canvas pans by dragging the background, zooms with
+  the wheel, and refits on background double-click or the "fit" button.
+- Send is disabled while there is nothing to send — no pending operation and
+  an empty note. A note alone counts: hosts may treat a note-only submit as
+  a real turn (mmx serve does).
 - New nodes appear in a staging row until the next real render assigns them
   a position. Pending connections are drawn as dashed overlay arrows.
 - Deleting is reversible until Send: deleted nodes stay visible, dimmed;

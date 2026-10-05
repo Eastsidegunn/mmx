@@ -38,6 +38,7 @@ When hooks are installed, notes for Edit/Write edits are not recorded because th
 - `nodes` and `edges` report added, removed, and changed IDs/keys. A node ID rename appears as removal plus addition. `kind_changed` reports a diagram-type change.
 - `moved` reports relative node-center movement after subtracting `stats.global_shift`. `stats.mean_move_px` and `max_move_px` measure the remaining layout movement; mmx reports shifts but does not prevent them.
 - `by` says who invoked the render, not a proven author of every edit.
+- A turn can carry **no graph changes at all** — empty `nodes`/`edges` with a non-empty `note`. That is the human asking a question or leaving a comment through `mmx serve`; respond to the note (edit the diagram or answer with your own `--note`), don't dismiss it as a no-op.
 
 See [diff-schema.md](references/diff-schema.md) for all diff and state fields.
 

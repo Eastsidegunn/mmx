@@ -40,6 +40,10 @@ pub struct RenderJob {
     pub out_diff: PathBuf,
     pub out_state: PathBuf,
     pub print_if_changed: bool,
+    /// Emit a full turn even when the source is unchanged (a zero-change
+    /// diff). Serve uses this for note-only turns; the CLI leaves it false,
+    /// keeping the no-op contract.
+    pub force_turn: bool,
 }
 
 /// Outcome of a render turn, mapped to exit codes by main.
@@ -97,7 +101,8 @@ pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnRes
     // nothing. Exception: if the last emitted turn was an error, this run
     // is the recovery and must replace the stale error message.
     if let Prev::Loaded(s) = &prev {
-        if s.source_sha256 == source_hash && !last_turn_was_error(&job.out_diff) {
+        if !job.force_turn && s.source_sha256 == source_hash && !last_turn_was_error(&job.out_diff)
+        {
             return Ok(TurnResult {
                 outcome: TurnOutcome::NoOp,
                 print: None,
@@ -133,7 +138,11 @@ pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnRes
     let report = match &prev {
         Prev::Loaded(p) => {
             let d = diff::diff(&p.to_model(), &current);
-            emit::DiffReport::from_diff(by, note, d, &current, warnings)
+            let mut report = emit::DiffReport::from_diff(by, note, d, &current, warnings);
+            // A forced turn over identical bytes (note-only) must not claim a
+            // text change the agent would then hunt for in the blind spots.
+            report.source_changed = p.source_sha256 != source_hash;
+            report
         }
         _ => emit::DiffReport::baseline(by, note, &current, warnings),
     };

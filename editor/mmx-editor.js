@@ -32,8 +32,10 @@
   var DEFAULT_STRINGS = {
     addNode: "+ node",
     send: "Send",
+    sendWithCount: function (n) { return "Send (" + n + ")"; },
     revert: "Revert",
     autoLayout: "auto layout",
+    fitView: "fit",
     notePlaceholder: "Say a word (recorded as --note)",
     menuEdit: "✎ edit",
     menuDelete: "✕ delete",
@@ -42,7 +44,7 @@
     label: "label",
     pendingOps: function (n) { return n + " pending operation(s)"; },
     idle: "Click a node or an arrow; drag the ● handle to connect; drag a node to rearrange (temporary)",
-    manualMode: "Manual placement (temporary) — send or a new turn snaps back to auto layout",
+    manualMode: "Moved nodes are placed temporarily — send or a new turn snaps back to auto layout",
     connected: function (a, b) { return a + " → " + b + " connected"; },
     deleted: function (id) { return id + " deleted — click again to undo"; },
     nothingToSend: "Nothing changed yet",
@@ -75,11 +77,17 @@
     ".staging{position:relative;display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;justify-content:center;}\n" +
     ".snode{position:relative;border:1.5px dashed var(--mmx-accent,#B04A17);border-radius:8px;background:#FFFFFF;color:#23272E;padding:8px 16px;font-size:12.5px;cursor:pointer;min-width:70px;text-align:center;user-select:none;}\n" +
     ".snode.selected{border-style:solid;border-color:var(--mmx-select,#2563EB);}\n" +
+    ".toolbar{position:absolute;left:10px;top:10px;z-index:32;display:flex;gap:4px;background:var(--mmx-surface,#FFFFFF);border:1px solid var(--mmx-border,#E5E2DB);border-radius:8px;padding:3px 4px;box-shadow:0 1px 6px rgba(0,0,0,.08);}\n" +
+    ".toolbar button{background:transparent;color:var(--mmx-ink,#23272E);border:none;padding:4px 10px;font-size:12.5px;border-radius:6px;cursor:pointer;white-space:nowrap;font-family:inherit;}\n" +
+    ".toolbar button:hover:not(:disabled){background:rgba(127,127,127,.15);}\n" +
+    ".toolbar button:disabled{opacity:.4;cursor:default;}\n" +
+    ".toolbar button[hidden]{display:none;}\n" +
     ".bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;}\n" +
     ".bar input{flex:1;min-width:160px;background:var(--mmx-surface,#FFFFFF);color:var(--mmx-ink,#23272E);border:1px solid var(--mmx-border,#E5E2DB);border-radius:8px;padding:9px 12px;font-size:14px;font-family:inherit;}\n" +
     ".bar button{background:var(--mmx-accent,#B04A17);color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;}\n" +
     ".bar button.ghost{background:transparent;color:var(--mmx-ink,#23272E);border:1px solid var(--mmx-border,#E5E2DB);font-weight:400;}\n" +
     ".bar button[hidden]{display:none;}\n" +
+    ".bar button:disabled{opacity:.45;cursor:not-allowed;}\n" +
     ".status{font-size:13px;color:var(--mmx-muted,#6E6A63);min-height:1.2em;margin-top:6px;}\n";
 
   function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
@@ -106,15 +114,20 @@
     var rootEl = document.createElement("div");
     rootEl.innerHTML =
       '<div class="stage">' +
-      '  <div class="viewport"><div class="svgbox"><div class="svgslot"></div></div></div>' +
+      '  <div class="viewport">' +
+      '    <div class="svgbox"><div class="svgslot"></div></div>' +
+      '    <div class="toolbar">' +
+      '      <button class="addnode" type="button"></button>' +
+      '      <button class="fit" type="button"></button>' +
+      '      <button class="autolayout" type="button" hidden></button>' +
+      '      <button class="revert" type="button"></button>' +
+      "    </div>" +
+      "  </div>" +
       '  <div class="staging"></div>' +
       "</div>" +
       '<div class="bar">' +
-      '  <button class="ghost addnode" type="button"></button>' +
-      '  <button class="ghost autolayout" type="button" hidden></button>' +
       '  <input class="note" type="text">' +
       '  <button class="send" type="button"></button>' +
-      '  <button class="ghost revert" type="button"></button>' +
       "</div>" +
       '<div class="status"></div>';
     shadow.appendChild(rootEl);
@@ -126,31 +139,49 @@
     var noteEl = rootEl.querySelector(".note");
     var statusEl = rootEl.querySelector(".status");
     var autoBtn = rootEl.querySelector(".autolayout");
+    var sendBtn = rootEl.querySelector(".send");
+    var fitBtn = rootEl.querySelector(".fit");
+    var revertBtn = rootEl.querySelector(".revert");
+    var toolbar = rootEl.querySelector(".toolbar");
     rootEl.querySelector(".addnode").textContent = S.addNode;
-    rootEl.querySelector(".send").textContent = S.send;
-    rootEl.querySelector(".revert").textContent = S.revert;
+    sendBtn.textContent = S.send;
+    revertBtn.textContent = S.revert;
     autoBtn.textContent = S.autoLayout;
+    fitBtn.textContent = S.fitView;
     noteEl.placeholder = S.notePlaceholder;
+    // The toolbar sits inside the pannable viewport; its presses are its own.
+    toolbar.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); });
+    toolbar.addEventListener("click", function (ev) { ev.stopPropagation(); });
 
     // model.nodes[id] = {label, shape, x?,y?,w?,h?, tx?,ty? (temp), deleted?, modified?, fresh?}
     // model.edges    = [{from, to, label, deleted?, pending?, labelChanged?, origLabel?}]
     var model = null, baseline = null, selected = null, destroyed = false;
-    var manual = false;
+    var manual = false; // true while any node sits on a temporary position
     var nodeVisuals = null; // id -> [svg elements] (classified lazily)
-    var edgeDecor = []; // standalone arrowhead polygons (no data-edge-id marker)
+    var edgeInfos = null; // [{el, from, to, extras}] — svg edge groups + their labels/arrowheads
+    var looseDecor = []; // decoration that matched no edge (left visible)
     var vz = 1, vx = 0, vy = 0; // camera: zoom + pan (CSS transform on svgbox)
+    var camAuto = true; // false once the user pans or zooms; a fit resets it
     function applyView() {
       svgbox.style.transform = "translate(" + vx + "px," + vy + "px) scale(" + vz + ")";
     }
     function fitView() {
-      vz = 1;
-      vx = Math.max((viewport.clientWidth - svgbox.offsetWidth) / 2, 8);
-      vy = 12;
+      // Scale down (never up) so the whole diagram is visible, centered.
+      camAuto = true;
+      var w = svgbox.offsetWidth, h = svgbox.offsetHeight;
+      var vw = viewport.clientWidth, vh = viewport.clientHeight;
+      if (!w || !h || !vw || !vh) { vz = 1; vx = 8; vy = 12; applyView(); return; }
+      vz = Math.max(Math.min(1, (vw - 24) / w, (vh - 24) / h), 0.05);
+      vx = Math.max((vw - w * vz) / 2, 12);
+      vy = Math.max((vh - h * vz) / 2, 12);
       applyView();
-    } // temporary-placement mode: svg edges hidden, all edges overlay-drawn
+    }
 
     function setStatus(m) { statusEl.textContent = m || ""; }
-    function idleStatus() { setStatus(manual ? S.manualMode : (opsCount() > 0 ? S.pendingOps(opsCount()) : S.idle)); }
+    function idleStatus() {
+      setStatus(manual ? S.manualMode : (opsCount() > 0 ? S.pendingOps(opsCount()) : S.idle));
+      updateSendState();
+    }
 
     function opsCount() {
       if (!model) return 0;
@@ -161,6 +192,16 @@
       });
       model.edges.forEach(function (e) { if (e.deleted || e.pending || e.labelChanged) n++; });
       return n;
+    }
+    function updateSendState() {
+      // A note alone is a valid turn (a question to the counterpart), so
+      // send is disabled only when there is neither a change nor a note.
+      var n = opsCount();
+      var hasNote = noteEl.value.trim().length > 0;
+      sendBtn.disabled = n === 0 && !hasNote;
+      sendBtn.title = sendBtn.disabled ? S.nothingToSend : "";
+      sendBtn.textContent = n > 0 ? S.sendWithCount(n) : S.send;
+      revertBtn.disabled = n === 0 && !manual;
     }
     function announce() {
       idleStatus();
@@ -318,7 +359,7 @@
         el.style.cursor = "pointer";
         el.style.pointerEvents = "auto";
         el.addEventListener("click", function (ev) {
-          if (manual) return;
+          if (el.style.opacity === "0") return; // replaced by an overlay line
           ev.stopPropagation();
           var e = logicalEdgeForElement(el);
           if (!e) return;
@@ -333,7 +374,8 @@
     // belongs to that node).
     function classifyNodeVisuals() {
       nodeVisuals = {};
-      edgeDecor = [];
+      edgeInfos = [];
+      looseDecor = [];
       var svg = svgslot.querySelector("svg");
       if (!svg || !model || !svg.viewBox || !svg.viewBox.baseVal.width) return;
       var vbW = svg.viewBox.baseVal.width, vbH = svg.viewBox.baseVal.height;
@@ -343,6 +385,7 @@
       // elements positioned via their own transform (mmdr's arrowhead <g>
       // wrappers) are located correctly.
       var kx = vbW / svgR.width, ky = vbH / svgR.height;
+      var decor = []; // small standalone polygons (arrowheads) — assigned to edges below
       Array.prototype.forEach.call(svg.children, function (el) {
         if (el.tagName === "defs") return;
         if (el.hasAttribute("data-edge-id") || el.hasAttribute("data-label-kind")) return;
@@ -356,7 +399,7 @@
         // Arrowheads: small standalone polygons/paths (often in a <g>
         // wrapper) without mmdr's data-edge-id marker — edge decoration,
         // never node visuals.
-        if (bw <= 24 && bh <= 24) { edgeDecor.push(el); return; }
+        if (bw <= 24 && bh <= 24) { decor.push({ el: el, x: cx, y: cy }); return; }
         for (var id in model.nodes) {
           var n = model.nodes[id];
           if (typeof n.x !== "number") continue;
@@ -365,6 +408,72 @@
             return;
           }
         }
+      });
+      // Edge groups: endpoints in viewBox units name the incident nodes, so a
+      // drag can hide exactly the edges touching moved nodes and keep the
+      // rest of the real rendering intact.
+      function nodeNear(p) {
+        var best = null, bestD = 400; // within ~20 viewBox units of a border
+        for (var id in model.nodes) {
+          var n = model.nodes[id];
+          if (typeof n.x !== "number") continue;
+          var dx = Math.max(Math.abs(p.x - (n.x + n.w / 2)) - n.w / 2, 0);
+          var dy = Math.max(Math.abs(p.y - (n.y + n.h / 2)) - n.h / 2, 0);
+          var d = dx * dx + dy * dy;
+          if (d < bestD) { bestD = d; best = id; }
+        }
+        return best;
+      }
+      // Label parts (rect + text group) carry the same data-edge-id as
+      // their edge path; collect them as that edge's extras directly.
+      var infoById = {};
+      svg.querySelectorAll("[data-edge-id]").forEach(function (el) {
+        if (el.hasAttribute("data-label-kind")) return; // attached below
+        var path = el.tagName === "path" ? el : el.querySelector("path");
+        var info = { el: el, from: null, to: null, a: null, b: null, mid: null, extras: [] };
+        if (path && path.getTotalLength) {
+          try {
+            var len = path.getTotalLength();
+            info.a = path.getPointAtLength(0);
+            info.b = path.getPointAtLength(len);
+            info.mid = path.getPointAtLength(len / 2);
+            info.from = nodeNear(info.a);
+            info.to = nodeNear(info.b);
+          } catch (e) { /* detached or zero-length path */ }
+        }
+        var eid = el.getAttribute("data-edge-id");
+        if (eid && !infoById[eid]) infoById[eid] = info;
+        edgeInfos.push(info);
+      });
+      function nearestEdge(x, y, pts) {
+        var best = null, bestD = Infinity;
+        edgeInfos.forEach(function (info) {
+          pts(info).forEach(function (p) {
+            if (!p) return;
+            var dx = p.x - x, dy = p.y - y, d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; best = info; }
+          });
+        });
+        return bestD <= 2500 ? best : null; // within 50 viewBox units
+      }
+      // Edge labels: shared data-edge-id names the owner; fall back to the
+      // nearest path midpoint when the marker is missing.
+      svg.querySelectorAll("[data-label-kind]").forEach(function (el) {
+        var eid = el.getAttribute("data-edge-id");
+        if (eid && infoById[eid]) { infoById[eid].extras.push(el); return; }
+        var r = el.getBoundingClientRect();
+        if (!r.width && !r.height) return;
+        var x = (r.left - svgR.left) * kx + (r.width * kx) / 2;
+        var y = (r.top - svgR.top) * ky + (r.height * ky) / 2;
+        var owner = nearestEdge(x, y, function (i) { return [i.mid]; });
+        if (owner) owner.extras.push(el);
+        else looseDecor.push(el);
+      });
+      // Arrowheads sit on an edge endpoint.
+      decor.forEach(function (d) {
+        var owner = nearestEdge(d.x, d.y, function (i) { return [i.a, i.b]; });
+        if (owner) owner.extras.push(d.el);
+        else looseDecor.push(d.el);
       });
     }
     function moveNodeVisuals(id) {
@@ -383,14 +492,34 @@
       if (!nodeVisuals) return;
       for (var id in nodeVisuals) nodeVisuals[id].forEach(function (el) { el.removeAttribute("transform"); });
     }
-    function setSvgEdgesVisible(v) {
-      var svg = svgslot.querySelector("svg");
-      if (!svg) return;
-      if (!v && !nodeVisuals) classifyNodeVisuals();
-      svg.querySelectorAll("[data-edge-id],[data-label-kind]").forEach(function (el) {
-        el.style.opacity = v ? "" : "0";
+    function movedNodes() {
+      var moved = {};
+      if (!model) return moved;
+      Object.keys(model.nodes).forEach(function (id) {
+        var n = model.nodes[id];
+        if (typeof n.tx === "number" || typeof n.ty === "number" || n.deleted) moved[id] = true;
       });
-      edgeDecor.forEach(function (el) { el.style.opacity = v ? "" : "0"; });
+      return moved;
+    }
+    // Hide only the svg edges that touch a moved (or deleted) node; the rest
+    // of the real rendering — curves, labels, arrowheads — stays visible.
+    function updateEdgeVisibility() {
+      if (!edgeInfos) classifyNodeVisuals();
+      var moved = manual ? movedNodes() : {};
+      var deleted = {};
+      if (model) {
+        Object.keys(model.nodes).forEach(function (id) {
+          if (model.nodes[id].deleted) deleted[id] = true;
+        });
+      }
+      (edgeInfos || []).forEach(function (info) {
+        var hide =
+          (manual && (info.from === null || info.to === null || moved[info.from] || moved[info.to])) ||
+          deleted[info.from] || deleted[info.to];
+        var op = hide ? "0" : "";
+        info.el.style.opacity = op;
+        info.extras.forEach(function (el) { el.style.opacity = op; });
+      });
     }
 
     // ---- overlay rendering ----
@@ -428,15 +557,16 @@
     }
 
     function overlayEdgeList() {
-      if (manual) {
-        return model.edges.filter(function (e) { return !e.deleted && alive(e.from) && alive(e.to); });
-      }
-      return model.edges.filter(function (e) { return e.pending && !e.deleted && alive(e.from) && alive(e.to); });
+      var moved = manual ? movedNodes() : {};
+      return model.edges.filter(function (e) {
+        if (e.deleted || !alive(e.from) || !alive(e.to)) return false;
+        return e.pending || moved[e.from] || moved[e.to];
+      });
     }
     function drawOverlayEdges() {
       var old = svgbox.querySelector(".overlaylines");
       if (old) old.remove();
-      setSvgEdgesVisible(!manual);
+      updateEdgeVisibility();
       var list = overlayEdgeList();
       if (!list.length) return;
       var NS = "http://www.w3.org/2000/svg";
@@ -453,42 +583,85 @@
         '<marker id="' + mid + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="' + ink + '"/></marker>' +
         '<marker id="' + mid + 'p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="' + accent + '"/></marker>';
       ov.appendChild(defs);
+      function wireEdgeClick(el, e) {
+        el.style.pointerEvents = "stroke";
+        el.style.cursor = "pointer";
+        el.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          var p = localPoint(ev);
+          openEdgeMenu(e, p.x, p.y);
+        });
+      }
+      function edgeText(x, y, stroke, label) {
+        var t = document.createElementNS(NS, "text");
+        t.setAttribute("x", x); t.setAttribute("y", y);
+        t.setAttribute("fill", stroke); t.setAttribute("font-size", "11");
+        t.setAttribute("text-anchor", "middle");
+        t.textContent = label;
+        ov.appendChild(t);
+      }
+      // Parallel edges between the same pair get a perpendicular offset so
+      // their overlay lines and labels do not coincide.
+      var pairCount = {}, pairSeen = {};
       list.forEach(function (e) {
+        var k = e.from + "\u0000" + e.to;
+        pairCount[k] = (pairCount[k] || 0) + 1;
+      });
+      list.forEach(function (e) {
+        var stroke = e.pending ? accent : ink;
+        if (e.from === e.to) {
+          // Self-loop: a small lobe on the node's right side (clipSegment
+          // degenerates for identical endpoints).
+          var N = boundsOf(e.from);
+          if (!N) return;
+          var x = N.cx + N.hw, y = N.cy;
+          var lp = document.createElementNS(NS, "path");
+          lp.setAttribute("d", "M " + x + " " + (y - 8) +
+            " C " + (x + 36) + " " + (y - 28) + ", " + (x + 36) + " " + (y + 28) +
+            ", " + (x + 1) + " " + (y + 8));
+          lp.setAttribute("fill", "none");
+          lp.setAttribute("stroke", stroke); lp.setAttribute("stroke-width", "2");
+          if (e.pending) lp.setAttribute("stroke-dasharray", "6 4");
+          lp.setAttribute("marker-end", "url(#" + mid + (e.pending ? "p" : "") + ")");
+          wireEdgeClick(lp, e);
+          ov.appendChild(lp);
+          if (e.label) edgeText(x + 40, y + 4, stroke, e.label);
+          return;
+        }
         var A = boundsOf(e.from), B = boundsOf(e.to);
         if (!A || !B) return;
         var seg = clipSegment(A, B);
         if (!seg) return;
-        var stroke = e.pending ? accent : ink;
+        var k = e.from + "\u0000" + e.to;
+        var idx = pairSeen[k] || 0;
+        pairSeen[k] = idx + 1;
+        var n = pairCount[k];
+        if (n > 1) {
+          var ddx = seg.x2 - seg.x1, ddy = seg.y2 - seg.y1;
+          var dl = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+          var off = (idx - (n - 1) / 2) * 12;
+          var px = (-ddy / dl) * off, py = (ddx / dl) * off;
+          seg.x1 += px; seg.y1 += py; seg.x2 += px; seg.y2 += py;
+        }
         var ln = document.createElementNS(NS, "line");
         ln.setAttribute("x1", seg.x1); ln.setAttribute("y1", seg.y1);
         ln.setAttribute("x2", seg.x2); ln.setAttribute("y2", seg.y2);
         ln.setAttribute("stroke", stroke); ln.setAttribute("stroke-width", "2");
         if (e.pending) ln.setAttribute("stroke-dasharray", "6 4");
         ln.setAttribute("marker-end", "url(#" + mid + (e.pending ? "p" : "") + ")");
-        if (manual) { // clickable in manual mode
-          ln.style.pointerEvents = "stroke";
-          ln.style.cursor = "pointer";
-          ln.addEventListener("click", function (ev) {
-            ev.stopPropagation();
-            var p = localPoint(ev);
-            openEdgeMenu(e, p.x, p.y);
-          });
-        }
+        wireEdgeClick(ln, e);
         ov.appendChild(ln);
-        if (e.label) {
-          var t = document.createElementNS(NS, "text");
-          t.setAttribute("x", (seg.x1 + seg.x2) / 2); t.setAttribute("y", (seg.y1 + seg.y2) / 2 - 5);
-          t.setAttribute("fill", stroke); t.setAttribute("font-size", "11");
-          t.setAttribute("text-anchor", "middle");
-          t.textContent = e.label;
-          ov.appendChild(t);
-        }
+        if (e.label) edgeText((seg.x1 + seg.x2) / 2, (seg.y1 + seg.y2) / 2 - 5, stroke, e.label);
       });
       svgbox.appendChild(ov);
     }
 
     // ---- pointer wiring: click menu / drag placement / handle connect ----
     var DRAG_MIN = 5;
+    // Double-click detection is manual: a click re-renders the overlay, so
+    // the browser never sees two clicks on the same element and native
+    // dblclick does not fire on nodes.
+    var lastClick = { id: null, t: 0 };
     function wireNodePointer(el, id) {
       el.addEventListener("pointerdown", function (ev) {
         if (ev.button !== 0) return;
@@ -523,7 +696,23 @@
           document.removeEventListener("pointermove", onMove);
           document.removeEventListener("pointerup", onUp);
           el.classList.remove("dragging");
-          if (!moved) onNodeClick(id);
+          if (moved || !alive(id)) {
+            // A drag, or the undelete click on a dimmed node, never counts
+            // toward a double-click.
+            lastClick = { id: null, t: 0 };
+            if (!moved) onNodeClick(id);
+            return;
+          }
+          var now = Date.now();
+          if (lastClick.id === id && now - lastClick.t < 400 && alive(id)) {
+            lastClick = { id: null, t: 0 };
+            selected = id;
+            render();
+            openInlineEditor(id);
+          } else {
+            lastClick = { id: id, t: now };
+            onNodeClick(id);
+          }
         }
         document.addEventListener("pointermove", onMove);
         document.addEventListener("pointerup", onUp);
@@ -706,10 +895,11 @@
       ev.preventDefault();
       var r = viewport.getBoundingClientRect();
       var px = ev.clientX - r.left, py = ev.clientY - r.top;
-      var nz = Math.min(4, Math.max(0.2, vz * Math.exp(-ev.deltaY * 0.0015)));
+      var nz = Math.min(4, Math.max(0.05, vz * Math.exp(-ev.deltaY * 0.0015)));
       vx = px - (px - vx) * (nz / vz);
       vy = py - (py - vy) * (nz / vz);
       vz = nz;
+      camAuto = false;
       applyView();
     }, { passive: false });
     viewport.addEventListener("pointerdown", function (ev) {
@@ -724,6 +914,7 @@
         panning = true;
         viewport.classList.add("panning");
         vx = bx + dx; vy = by + dy;
+        camAuto = false;
         applyView();
       }
       function onUp(uv) {
@@ -736,7 +927,7 @@
       document.addEventListener("pointerup", onUp);
     });
     viewport.addEventListener("dblclick", function (ev) {
-      if (ev.target.closest && ev.target.closest(".hit,.menu,.inline,.handle")) return;
+      if (ev.target.closest && ev.target.closest(".hit,.menu,.inline,.handle,.toolbar")) return;
       fitView();
     });
 
@@ -769,9 +960,17 @@
       clearNodeTransforms();
       selected = null; render(); announce();
     });
-    rootEl.querySelector(".send").addEventListener("click", function () {
-      if (opsCount() === 0) { setStatus(S.nothingToSend); return; }
-      if (opts.onSubmit) opts.onSubmit({ source: serialize(), note: noteEl.value.trim(), ops: opsCount() });
+    fitBtn.addEventListener("click", fitView);
+    noteEl.addEventListener("input", updateSendState);
+    sendBtn.addEventListener("click", function () {
+      var note = noteEl.value.trim();
+      var ops = opsCount();
+      if (ops === 0 && !note) { setStatus(S.nothingToSend); return; }
+      // A note-only turn must not rewrite the diagram text: serialize()
+      // normalizes (drops comments, subgraphs, dashed arrows, line order),
+      // so with zero operations the confirmed source goes out verbatim.
+      var source = ops === 0 && baseline && baseline.source ? baseline.source : serialize();
+      if (opts.onSubmit) opts.onSubmit({ source: source, note: note, ops: ops });
     });
 
     function onResize() { if (model) render(); }
@@ -780,7 +979,7 @@
     var api = {
       update: function (d) {
         if (destroyed) return;
-        if (d.svg) { svgslot.innerHTML = d.svg; nodeVisuals = null; }
+        if (d.svg) { svgslot.innerHTML = d.svg; nodeVisuals = null; edgeInfos = null; looseDecor = []; }
         if (d.nodes && d.edges) {
           model = { nodes: deepCopy(d.nodes), edges: deepCopy(d.edges) };
           var dm = /^\s*flowchart\s+(\w+)/.exec(d.source || "");
@@ -791,8 +990,11 @@
         }
         wireSvgEdgeTargets();
         render();
-        if (d.svg) fitView();
+        // Refit only an untouched camera: an incoming turn must not reset
+        // the pan/zoom the user set up.
+        if (d.svg && camAuto) fitView();
         idleStatus();
+        updateSendState();
       },
       getSource: serialize,
       getNote: function () { return noteEl.value.trim(); },
@@ -858,5 +1060,5 @@
     if (!customElements.get("mmx-editor")) customElements.define("mmx-editor", MmxEditorElement);
   }
 
-  return { mount: mount, version: "0.3.0" };
+  return { mount: mount, version: "0.4.0" };
 });

@@ -141,6 +141,7 @@ fn job(input: &Path, by: &str, note: Option<String>) -> RenderJob {
         out_diff: sibling(input, "diff.json"),
         out_state,
         print_if_changed: false,
+        force_turn: false,
     }
 }
 
@@ -447,13 +448,31 @@ fn apply_turn(shared: &mut Shared, turn: TurnInput) -> Result<(u16, Value)> {
             json!({"exit":1,"conflict":true,"seq":shared.seq,"state":state_value(shared)?}),
         ));
     }
-    if std::fs::read(&shared.input)? != turn.source.as_bytes() {
+    let disk = std::fs::read(&shared.input)?;
+    if disk != turn.source.as_bytes() {
+        // An external (agent) edit the poller has not yet folded into a turn
+        // must not be silently overwritten — base_seq cannot catch it because
+        // seq has not moved yet. Treat it like any other conflict.
+        if state::hex_sha256(&disk) != shared.observed_hash {
+            return Ok((
+                409,
+                json!({"exit":1,"conflict":true,"seq":shared.seq,"state":state_value(shared)?}),
+            ));
+        }
         crate::emit::write_atomic(&shared.input, turn.source.as_bytes())?;
         shared.observed_hash = state::hex_sha256(turn.source.as_bytes());
         shared.observed_mtime = modified_time(&shared.input);
         shared.pending_hash = None;
     }
-    let job = job(&shared.input, "human", turn.note.clone());
+    // A note with zero diagram changes is still a turn — the human asking a
+    // question ([H] 2026-10-05). force_turn emits the zero-change diff
+    // through the ordinary pipeline, so the board publish happens too.
+    let note_only = turn
+        .note
+        .as_deref()
+        .is_some_and(|note| !note.trim().is_empty());
+    let mut job = job(&shared.input, "human", turn.note.clone());
+    job.force_turn = note_only;
     let result = run_render_bytes(&job, turn.source.as_bytes())?;
     if result.outcome == TurnOutcome::NoOp {
         return Ok((200, json!({"exit": 0, "noop": true})));

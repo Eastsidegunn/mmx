@@ -10,6 +10,13 @@
     h1 { font-size:1.3rem; margin:0; }
     #turn { color:#555; }
     #status { min-height:1.5em; margin:10px 0; color:#9b351e; white-space:pre-wrap; }
+    #status:not(:empty) { background:#fff3ec; border-left:3px solid #b04a17; padding:6px 10px; border-radius:0 6px 6px 0; }
+    mmx-editor { --mmx-height: min(72vh, 820px); }
+    #history { margin:14px 0 0; padding:0; list-style:none; font-size:13.5px; color:#444; }
+    #history li { padding:4px 0; border-top:1px solid #eee8df; }
+    #history .who { font-weight:600; color:#23272e; }
+    #history .when { color:#999; margin-left:8px; font-size:12px; }
+    #history-title { margin:18px 0 4px; font-size:13px; color:#888; text-transform:none; }
   </style>
 </head>
 <body>
@@ -17,6 +24,8 @@
   <div id="status" role="status" aria-live="polite"></div>
   <button id="load-current" hidden>현 상태 불러오기</button>
   <mmx-editor></mmx-editor>
+  <div id="history-title" hidden>턴 기록 (이 창에서 본 것)</div>
+  <ul id="history"></ul>
   <script src="/editor.js"></script>
   <script>
     const ed = document.querySelector('mmx-editor');
@@ -24,23 +33,51 @@
     const turn = document.querySelector('#turn');
     const loadCurrent = document.querySelector('#load-current');
     ed.strings = {
-      addNode: '+ 노드', send: '보내기', revert: '되돌리기', autoLayout: '자동 배치',
-      notePlaceholder: '이번 턴의 메모', menuEdit: '✎ 편집', menuDelete: '✕ 삭제',
+      addNode: '+ 노드', send: '턴 보내기', sendWithCount: n => `턴 보내기 (${n}개 변경)`,
+      revert: '되돌리기', autoLayout: '자동 배치', fitView: '화면 맞춤',
+      notePlaceholder: '메모나 질문 — 그림을 안 바꿔도 턴으로 보내집니다',
+      menuEdit: '✎ 편집', menuDelete: '✕ 삭제',
       menuLabel: '라벨', apply: '확인', label: '라벨',
-      pendingOps: n => `${n}개 변경 대기 중`, idle: '노드나 화살표를 선택해 편집하세요',
-      manualMode: '임시 배치 — 보내거나 새 턴을 받으면 자동 배치됩니다',
+      pendingOps: n => `${n}개 변경 대기 중`, idle: '노드를 더블클릭해 이름을 바꾸고, ● 핸들을 끌어 연결하세요',
+      manualMode: '옮긴 노드만 임시 위치 — 보내거나 새 턴을 받으면 자동 배치됩니다',
       connected: (a,b) => `${a} → ${b} 연결됨`, deleted: id => `${id} 삭제됨 — 다시 누르면 취소`,
-      nothingToSend: '보낼 변경이 없습니다', staged: '(배치 전)', newNodeLabel: '새 노드'
+      nothingToSend: '보낼 변경도 메모도 없습니다', staged: '(배치 전)', newNodeLabel: '새 노드'
     };
     let seq = -1;
     let epoch = null;
     let waitingSeq = -1;
     let sending = false;
+    const history = document.querySelector('#history');
+    const historyTitle = document.querySelector('#history-title');
+    const seenTurns = new Set();
+    function logTurn(s) {
+      // Page-local record of the turns this window has seen, latest first.
+      // 'serve'/'unknown' is the baseline render, not a conversation turn.
+      if (!s.by || s.by === 'unknown' || s.by === 'serve') return;
+      const key = `${s.epoch}:${s.seq}`;
+      if (seenTurns.has(key)) return;
+      seenTurns.add(key);
+      const li = document.createElement('li');
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = s.by === 'human' ? '나' : s.by;
+      const when = document.createElement('span');
+      when.className = 'when';
+      when.textContent = `턴 ${s.seq} · ${new Date().toLocaleTimeString('ko-KR')}`;
+      li.append(who, document.createTextNode(s.note ? ` — ${s.note}` : ' — (메모 없음)'), when);
+      history.prepend(li);
+      while (history.children.length > 30) history.lastChild.remove();
+      historyTitle.hidden = false;
+    }
     function showState(s) {
       ed.load(s);
       seq = s.seq;
       epoch = s.epoch;
-      turn.textContent = `마지막 턴: ${s.by || 'serve'}${s.note ? ' · ' + s.note : ''}`;
+      // 'serve'/'unknown' means the baseline render, not a conversation turn.
+      turn.textContent = (!s.by || s.by === 'unknown' || s.by === 'serve')
+        ? '아직 턴 없음 — 초안을 편집해 첫 턴을 보내세요'
+        : `마지막 턴: ${s.by}${s.note ? ' · ' + s.note : ''}`;
+      logTurn(s);
       status.textContent = '';
       loadCurrent.hidden = true;
     }

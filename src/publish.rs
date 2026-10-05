@@ -297,8 +297,24 @@ impl Client {
         let d: Value = serde_json::from_slice(&turn.diff)
             .map_err(|error| DeliveryError::Drop(format!("invalid diff: {error}")))?;
         let count = |section: &str, field: &str| d[section][field].as_array().map_or(0, Vec::len);
+        // The note is the whole point of a zero-change turn; carry it in the
+        // summary. ';' and control chars are stripped so the segment format
+        // (and mmx pull's parser) stays unambiguous.
+        let note = d["note"].as_str().map_or(String::new(), |note| {
+            let cleaned: String = note
+                .chars()
+                .map(|c| if c == ';' || c.is_control() { ' ' } else { c })
+                .take(80)
+                .collect();
+            let cleaned = cleaned.trim();
+            if cleaned.is_empty() {
+                String::new()
+            } else {
+                format!("; note={cleaned}")
+            }
+        });
         let summary = format!(
-            "turn {} by {}: added {}, removed {}, changed {}; diff={diff}; mmd={mmd}",
+            "turn {} by {}: added {}, removed {}, changed {}{note}; diff={diff}; mmd={mmd}",
             turn.seq,
             turn.by,
             count("nodes", "added") + count("edges", "added"),

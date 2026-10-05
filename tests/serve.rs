@@ -235,13 +235,66 @@ fn mmx002_t4_parse_error_keeps_last_valid_artifacts() {
 
 #[test]
 fn mmx002_t5_noop_preserves_diff_bytes() {
+    // Identical source with no note (or a whitespace note) stays a no-op;
+    // a real note makes it a turn instead (mmx005 below).
     let s = start(A);
     post(s.addr, B, "첫 턴");
     let diff = std::fs::read(s.dir.join("d.diff.json")).unwrap();
-    let result = post(s.addr, B, "반복");
-    assert_eq!(result["exit"], 0);
-    assert_eq!(result["noop"], true);
-    assert_eq!(std::fs::read(s.dir.join("d.diff.json")).unwrap(), diff);
+    for empty in ["", "   "] {
+        let result = post(s.addr, B, empty);
+        assert_eq!(result["exit"], 0);
+        assert_eq!(result["noop"], true);
+        assert_eq!(std::fs::read(s.dir.join("d.diff.json")).unwrap(), diff);
+    }
+}
+
+#[test]
+fn mmx005_note_only_turn_is_a_real_turn() {
+    // [H] 2026-10-05: a note with zero diagram changes is a turn — the
+    // human asking a question. It bumps seq and lands in diff.json.
+    let s = start(A);
+    post(s.addr, B, "첫 턴");
+    let before = get_json(s.addr, "/state");
+    let result = post(s.addr, B, "이 흐름 맞아?");
+    assert_eq!(result["exit"], 0, "{result}");
+    assert_ne!(result["noop"], true, "{result}");
+    assert_eq!(
+        result["state"]["seq"].as_u64().unwrap(),
+        before["seq"].as_u64().unwrap() + 1
+    );
+    assert_eq!(result["state"]["note"], "이 흐름 맞아?");
+    assert_eq!(result["diff"]["nodes"]["added"], json!([]));
+    let diff = file_json(&s.dir, "d.diff.json");
+    assert_eq!(diff["by"], "human");
+    assert_eq!(diff["note"], "이 흐름 맞아?");
+    // Identical bytes: no text change to hunt for, and the file untouched.
+    assert_eq!(diff["source_changed"], false);
+    assert_eq!(std::fs::read_to_string(s.dir.join("d.mmd")).unwrap(), B);
+}
+
+#[test]
+fn mmx005_unpolled_agent_edit_conflicts_instead_of_overwrite() {
+    // The poller needs two identical sightings (~600ms) before an external
+    // edit becomes a turn. A human submit in that window used to overwrite
+    // the agent's file silently (base_seq cannot catch it: seq is unmoved).
+    let s = start(A);
+    post(s.addr, B, "첫 턴");
+    let agent_edit = "flowchart TD\n    A --> B\n    B --> AGENT_NEW\n";
+    std::fs::write(s.dir.join("d.mmd"), agent_edit).unwrap();
+    let (status, body) = request(
+        s.addr,
+        "POST",
+        "/turn",
+        Some(&json!({"source":B,"note":"질문 하나","base_seq":1})),
+    );
+    assert_eq!(status, 409, "{}", String::from_utf8_lossy(&body));
+    let conflict: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(conflict["conflict"], true);
+    // The agent's edit survives on disk.
+    assert_eq!(
+        std::fs::read_to_string(s.dir.join("d.mmd")).unwrap(),
+        agent_edit
+    );
 }
 
 #[test]

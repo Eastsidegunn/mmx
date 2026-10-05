@@ -436,3 +436,30 @@ fn mmx004_control_chars_in_actor_are_sanitized() {
         "{stdout}"
     );
 }
+
+#[test]
+fn mmx005_summary_note_segment_is_ignored_by_parser() {
+    // publish now inserts "; note=…" before the blob ids; pull must keep
+    // parsing seq/by/diff/mmd regardless.
+    let mut blobs = HashMap::new();
+    let first = blob(FIRST, &mut blobs);
+    let diff_one = blob(DIFF_ONE, &mut blobs);
+    let fake = Fake::start(
+        workspace(
+            &["goal-1"],
+            vec![json!({
+                "kind":"mmx-turn",
+                "goalId":"goal-1",
+                "summary":format!(
+                    "turn 1 by human: added 0, removed 0, changed 0; note=이 흐름 맞아? mmd=가짜 유도; diff={diff_one}; mmd={first}"
+                )
+            })],
+        ),
+        blobs,
+    );
+    let dir = Dir::new();
+    let output = dir.pull(&fake, "goal-1");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("pulled turn 1 by human"));
+    assert_eq!(std::fs::read(dir.0.join("d.mmd")).unwrap(), FIRST);
+}
