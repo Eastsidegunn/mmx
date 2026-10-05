@@ -4,6 +4,7 @@ pub mod diff;
 pub mod emit;
 pub mod init;
 pub mod model;
+pub mod publish;
 pub mod render;
 pub mod serve;
 pub mod state;
@@ -68,11 +69,14 @@ enum Prev {
 }
 
 pub fn run_render(job: &RenderJob) -> anyhow::Result<TurnResult> {
-    check_path_collisions(job)?;
-
     let bytes = std::fs::read(&job.input)
         .with_context(|| format!("cannot read {}", job.input.display()))?;
-    let source_hash = state::hex_sha256(&bytes);
+    run_render_bytes(job, &bytes)
+}
+
+pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnResult> {
+    check_path_collisions(job)?;
+    let source_hash = state::hex_sha256(bytes);
 
     let prev = match &job.prev {
         PrevSource::Explicit(p) if !p.exists() => {
@@ -107,10 +111,10 @@ pub fn run_render(job: &RenderJob) -> anyhow::Result<TurnResult> {
     let by = job.by.as_str();
     let note = job.note.as_deref();
 
-    let source = match std::str::from_utf8(&bytes) {
+    let source = match std::str::from_utf8(bytes) {
         Ok(s) => s,
         Err(e) => {
-            let err = render::encoding_error(&bytes, e);
+            let err = render::encoding_error(bytes, e);
             return emit_turn_error(job, emit::DiffReport::turn_error(by, note, &err, warnings));
         }
     };

@@ -67,6 +67,12 @@ enum Command {
         /// Permit listening on a non-loopback address
         #[arg(long)]
         allow_external: bool,
+        /// Rhizome board URL for publishing rendered turns
+        #[arg(long)]
+        rhizome: Option<String>,
+        /// Mission or goal ID on the Rhizome board
+        #[arg(long)]
+        bind: Option<String>,
     },
 }
 
@@ -77,7 +83,9 @@ fn main() -> ExitCode {
             input,
             addr,
             allow_external,
-        } => match mmx::serve::run(input, &addr, allow_external) {
+            rhizome,
+            bind,
+        } => match mmx::serve::run(input, &addr, allow_external, rhizome, bind) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("mmx serve: {e:#}");
