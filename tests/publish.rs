@@ -57,18 +57,32 @@ impl Fake {
                     Err(error) => panic!("fake accept: {error}"),
                 };
                 let mut stream = stream;
+                // The listener is nonblocking for the shutdown poll; accepted
+                // streams inherit that on macOS, so reads under parallel test
+                // load hit WouldBlock. Blocking + timeout is what we want.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
+                // A half-open or torn-down client connection is routine under
+                // parallel test load: drop it instead of panicking the fake.
                 let mut reader = BufReader::new(&mut stream);
                 let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                let path = line.split_whitespace().nth(1).unwrap().to_owned();
+                if reader.read_line(&mut line).is_err() {
+                    continue;
+                }
+                let Some(path) = line.split_whitespace().nth(1).map(str::to_owned) else {
+                    continue;
+                };
                 let mut content_type = String::new();
                 let mut length = 0;
+                let mut headers_ok = true;
                 loop {
                     line.clear();
-                    reader.read_line(&mut line).unwrap();
+                    if reader.read_line(&mut line).is_err() || line.is_empty() {
+                        headers_ok = false;
+                        break;
+                    }
                     if line == "\r\n" {
                         break;
                     }
@@ -77,12 +91,17 @@ impl Fake {
                             content_type = value.trim().to_owned();
                         }
                         if name.eq_ignore_ascii_case("content-length") {
-                            length = value.trim().parse().unwrap();
+                            length = value.trim().parse().unwrap_or(0);
                         }
                     }
                 }
+                if !headers_ok {
+                    continue;
+                }
                 let mut body = vec![0; length];
-                reader.read_exact(&mut body).unwrap();
+                if reader.read_exact(&mut body).is_err() {
+                    continue;
+                }
                 drop(reader);
                 let (status, response) = match path.as_str() {
                     "/v1/workspace" => (200, workspace.as_bytes().to_vec()),
@@ -118,17 +137,22 @@ impl Fake {
                     body,
                 });
                 if path == "/v1/workspace" {
-                    write!(stream, "HTTP/1.1 {status} Test\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:X}\r\n", response.len()).unwrap();
-                    stream.write_all(&response).unwrap();
-                    stream.write_all(b"\r\n0\r\n\r\n").unwrap();
+                    let header = format!(
+                        "HTTP/1.1 {status} Test\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:X}\r\n",
+                        response.len()
+                    );
+                    let _ = stream
+                        .write_all(header.as_bytes())
+                        .and_then(|()| stream.write_all(&response))
+                        .and_then(|()| stream.write_all(b"\r\n0\r\n\r\n"));
                 } else {
-                    write!(
-                        stream,
+                    let header = format!(
                         "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         response.len()
-                    )
-                    .unwrap();
-                    stream.write_all(&response).unwrap();
+                    );
+                    let _ = stream
+                        .write_all(header.as_bytes())
+                        .and_then(|()| stream.write_all(&response));
                 }
             }
         });
@@ -354,7 +378,11 @@ fn mmx003_s2_retry_reuploads_same_blob_ids() {
     // >= 6: after the retry succeeds the worker immediately publishes the
     // queued next turn, so a snapshot may already contain its blobs (flake
     // seen under load). Order is deterministic: 0..3 attempt one, 3..6 retry.
-    assert!(blobs.len() >= 6, "expected at least 6 blob posts, got {}", blobs.len());
+    assert!(
+        blobs.len() >= 6,
+        "expected at least 6 blob posts, got {}",
+        blobs.len()
+    );
     // MMX-003: retrying all three content-addressed POSTs is safe and proves identical IDs.
     for index in 0..3 {
         assert_eq!(

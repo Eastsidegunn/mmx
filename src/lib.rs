@@ -5,6 +5,7 @@ pub mod emit;
 pub mod init;
 pub mod model;
 pub mod publish;
+pub mod pull;
 pub mod render;
 pub mod serve;
 pub mod state;

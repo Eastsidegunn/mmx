@@ -74,11 +74,37 @@ enum Command {
         #[arg(long)]
         bind: Option<String>,
     },
+    /// Pull the latest published turn from a Rhizome board
+    Pull {
+        /// Local diagram file (.mmd); overwritten with the pulled turn,
+        /// including any local edits that were never published
+        input: PathBuf,
+        /// Rhizome board URL
+        #[arg(long)]
+        rhizome: String,
+        /// Mission or goal ID on the Rhizome board
+        #[arg(long)]
+        bind: String,
+    },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
+        Command::Pull {
+            input,
+            rhizome,
+            bind,
+        } => match mmx::pull::run(&input, &rhizome, &bind) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("mmx pull: {error:#}");
+                ExitCode::from(1)
+            }
+        },
         Command::Serve {
             input,
             addr,

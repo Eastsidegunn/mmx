@@ -69,7 +69,7 @@ fn read(path: &Path) -> Result<Vec<u8>> {
 }
 
 #[derive(Clone)]
-struct Client {
+pub(crate) struct Client {
     addr: SocketAddr,
     host: String,
     bind: String,
@@ -77,12 +77,12 @@ struct Client {
 }
 
 #[derive(Clone, Copy)]
-enum BindingKind {
+pub(crate) enum BindingKind {
     Goal,
     Mission,
 }
 
-enum RequestError {
+pub(crate) enum RequestError {
     Unavailable(std::io::Error),
     Invalid(anyhow::Error),
 }
@@ -116,12 +116,16 @@ fn request_failure(error: RequestError) -> DeliveryError {
     }
 }
 
-fn workspace_kind(body: &[u8], bind: &str) -> Result<Option<BindingKind>> {
+pub(crate) fn workspace_kind(body: &[u8], bind: &str) -> Result<Option<BindingKind>> {
     let value: Value = serde_json::from_slice(body).context("invalid workspace JSON")?;
     // The live contract nests the projection under "body" (envelope
     // {revision, body:{missions, tasks, ...}}); MMX-003 live S5 caught a
     // flat-shape assumption here that the fakes had mirrored.
-    let root = if value.get("body").is_some() { &value["body"] } else { &value };
+    let root = if value.get("body").is_some() {
+        &value["body"]
+    } else {
+        &value
+    };
     for (field, kind) in [
         ("missions", BindingKind::Goal),
         ("tasks", BindingKind::Mission),
@@ -243,7 +247,7 @@ pub fn start(url: Option<String>, bind: Option<String>) -> Result<Option<Publish
 }
 
 impl Client {
-    fn new(url: &str, bind: String) -> Result<Self> {
+    pub(crate) fn new(url: &str, bind: String) -> Result<Self> {
         let authority = url
             .strip_prefix("http://")
             .ok_or_else(|| anyhow!("--rhizome must be an http:// loopback URL"))?
@@ -352,7 +356,7 @@ impl Client {
         Ok(id.to_owned())
     }
 
-    fn request(
+    pub(crate) fn request(
         &self,
         method: &str,
         path: &str,
