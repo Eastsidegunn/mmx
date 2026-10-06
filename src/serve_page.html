@@ -22,6 +22,10 @@
     #history .when { color:#999; margin-left:8px; font-size:12px; }
     #history-title { margin:0 0 4px; font-size:13px; color:#888; }
     #history #history-empty { color:#999; border-top:none; }
+    #history .note { white-space:pre-wrap; }
+    #history .note.none { color:#999; }
+    #history .summary { color:#777; font-size:12.5px; }
+    #history .summary.error { color:#9b351e; }
   </style>
 </head>
 <body>
@@ -31,7 +35,7 @@
   <div class="layout">
     <mmx-editor></mmx-editor>
     <aside>
-      <div id="history-title">턴 기록 (이 창에서 본 것)</div>
+      <div id="history-title">턴 기록</div>
       <ul id="history"><li id="history-empty">아직 없음 — 보내거나 받은 턴이 여기 쌓입니다</li></ul>
     </aside>
   </div>
@@ -57,25 +61,56 @@
     let waitingSeq = -1;
     let sending = false;
     const history = document.querySelector('#history');
-    const seenTurns = new Set();
-    function logTurn(s) {
-      // Page-local record of the turns this window has seen, latest first.
-      // 'serve'/'unknown' is the baseline render, not a conversation turn.
-      if (!s.by || s.by === 'unknown' || s.by === 'serve') return;
-      const key = `${s.epoch}:${s.seq}`;
-      if (seenTurns.has(key)) return;
-      seenTurns.add(key);
-      const li = document.createElement('li');
-      const who = document.createElement('span');
-      who.className = 'who';
-      who.textContent = s.by === 'human' ? '나' : s.by;
-      const when = document.createElement('span');
-      when.className = 'when';
-      when.textContent = `턴 ${s.seq} · ${new Date().toLocaleTimeString('ko-KR')}`;
-      li.append(who, document.createTextNode(s.note ? ` — ${s.note}` : ' — (메모 없음)'), when);
-      document.querySelector('#history-empty')?.remove();
-      history.prepend(li);
-      while (history.children.length > 30) history.lastChild.remove();
+    function changeSummary(m) {
+      // One line from the server's generic counts.
+      if (m.error) return `오류: ${m.error}`;
+      const part = (name, a, r, c) => {
+        const bits = [];
+        if (a) bits.push(`+${a}`);
+        if (r) bits.push(`−${r}`);
+        if (c) bits.push(`~${c}`);
+        return bits.length ? `${name} ${bits.join(' ')}` : '';
+      };
+      const text = [
+        part('노드', m.nodes_added, m.nodes_removed, m.nodes_changed),
+        part('연결', m.edges_added, m.edges_removed, m.edges_changed),
+      ].filter(Boolean).join(' · ');
+      return text || '그림 변경 없음';
+    }
+    function renderHistory(entries) {
+      // The whole conversation from the turn log, latest first.
+      history.replaceChildren();
+      if (!entries.length) {
+        const li = document.createElement('li');
+        li.id = 'history-empty';
+        li.textContent = '아직 없음 — 보내거나 받은 턴이 여기 쌓입니다';
+        history.append(li);
+        return;
+      }
+      for (const e of [...entries].reverse()) {
+        const li = document.createElement('li');
+        const who = document.createElement('span');
+        who.className = 'who';
+        // 'serve'/'unknown' is the baseline render, not a speaker.
+        who.textContent = e.by === 'human' ? '나'
+          : (!e.by || e.by === 'serve' || e.by === 'unknown') ? '시작' : e.by;
+        const when = document.createElement('span');
+        when.className = 'when';
+        when.textContent = e.at ? new Date(e.at).toLocaleString('ko-KR') : '';
+        const note = document.createElement('div');
+        note.className = e.note ? 'note' : 'note none';
+        note.textContent = e.note || '(메모 없음)';
+        const summary = document.createElement('div');
+        summary.className = e.summary && e.summary.error ? 'summary error' : 'summary';
+        summary.textContent = changeSummary(e.summary || {});
+        li.append(who, when, note, summary);
+        history.append(li);
+      }
+    }
+    async function loadHistory() {
+      const response = await fetch('/history', {cache:'no-store'});
+      if (!response.ok) throw new Error(`기록 조회 실패 (${response.status})`);
+      renderHistory((await response.json()).entries || []);
     }
     function showState(s) {
       ed.load(s);
@@ -85,7 +120,6 @@
       turn.textContent = (!s.by || s.by === 'unknown' || s.by === 'serve')
         ? '아직 턴 없음 — 초안을 편집해 첫 턴을 보내세요'
         : `마지막 턴: ${s.by}${s.note ? ' · ' + s.note : ''}`;
-      logTurn(s);
       status.textContent = '';
       loadCurrent.hidden = true;
     }
@@ -149,9 +183,11 @@
       if (loadCurrent.hidden && waitingSeq > seq && ed.pendingOps() === 0 && !sending) refresh().catch(error => status.textContent = error.message);
     });
     refresh().catch(error => status.textContent = error.message);
+    loadHistory().catch(error => status.textContent = error.message);
     const events = new EventSource('/events');
     events.onmessage = event => {
       const next = JSON.parse(event.data);
+      loadHistory().catch(error => status.textContent = error.message);
       if (epoch === null || next.epoch !== epoch || next.seq > seq) {
         refresh().catch(error => status.textContent = error.message);
       }

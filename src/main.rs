@@ -1,10 +1,11 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
-use mmx::{run_render, sibling, PrevSource, RenderJob, TurnOutcome};
+use mmx::{default_job, run_render, sibling, PrevSource, RenderJob, TurnOutcome};
 
 #[derive(Parser)]
 #[command(
@@ -56,6 +57,25 @@ enum Command {
         /// Print diff.json to stdout if this run wrote a non-baseline turn
         #[arg(long)]
         print_if_changed: bool,
+    },
+    /// Make a turn that carries a message (any unrendered edits included)
+    Note {
+        /// Input diagram file (.mmd)
+        input: PathBuf,
+        /// The message
+        text: String,
+        /// Who is speaking
+        #[arg(long, default_value = "agent")]
+        by: String,
+    },
+    /// Block until the human has spoken last; print their turns' diffs as
+    /// JSON lines (exit 0), or exit 3 on timeout
+    Wait {
+        /// Input diagram file (.mmd)
+        input: PathBuf,
+        /// Seconds to wait; 0 checks once and returns
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
     },
     /// Open a local browser cockpit for a diagram
     Serve {
@@ -120,37 +140,64 @@ fn main() -> ExitCode {
                 out_state,
                 print_if_changed,
                 force_turn: false,
+                log: Some(sibling(&input, "turns.jsonl")),
                 input,
             };
-
-            match run_render(&job) {
-                Ok(result) => {
-                    if let Some(text) = &result.print {
-                        let mut stdout = std::io::stdout().lock();
-                        if stdout
-                            .write_all(text.as_bytes())
-                            .and_then(|_| stdout.flush())
-                            .is_err()
-                        {
-                            return ExitCode::from(1);
-                        }
-                    }
-                    match result.outcome {
-                        TurnOutcome::Ok | TurnOutcome::NoOp => ExitCode::SUCCESS,
-                        TurnOutcome::ParseError => {
-                            eprintln!(
-                                "parse error: see {} (exit 2 = fixable by editing the diagram)",
-                                job.out_diff.display()
-                            );
-                            ExitCode::from(2)
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("mmx: {e:#}");
-                    ExitCode::from(1)
+            finish_render(&job)
+        }
+        Command::Note { input, text, by } => {
+            let mut job = default_job(&input, &by, Some(text));
+            job.force_turn = true;
+            finish_render(&job)
+        }
+        Command::Wait { input, timeout } => {
+            let diffs = mmx::turnlog::run_wait(&input, Duration::from_secs(timeout));
+            if diffs.is_empty() {
+                return ExitCode::from(3);
+            }
+            let mut stdout = std::io::stdout().lock();
+            for diff in diffs {
+                let line = diff.to_string() + "\n";
+                if stdout.write_all(line.as_bytes()).is_err() {
+                    return ExitCode::from(1);
                 }
             }
+            match stdout.flush() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::from(1),
+            }
+        }
+    }
+}
+
+/// Run a turn and map its outcome to the render exit codes.
+fn finish_render(job: &RenderJob) -> ExitCode {
+    match run_render(job) {
+        Ok(result) => {
+            if let Some(text) = &result.print {
+                let mut stdout = std::io::stdout().lock();
+                if stdout
+                    .write_all(text.as_bytes())
+                    .and_then(|_| stdout.flush())
+                    .is_err()
+                {
+                    return ExitCode::from(1);
+                }
+            }
+            match result.outcome {
+                TurnOutcome::Ok | TurnOutcome::NoOp => ExitCode::SUCCESS,
+                TurnOutcome::ParseError => {
+                    eprintln!(
+                        "parse error: see {} (exit 2 = fixable by editing the diagram)",
+                        job.out_diff.display()
+                    );
+                    ExitCode::from(2)
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("mmx: {e:#}");
+            ExitCode::from(1)
         }
     }
 }

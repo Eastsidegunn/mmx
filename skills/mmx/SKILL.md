@@ -27,9 +27,30 @@ Immediately after **every** `.mmd` edit, including shell or script edits that ho
 mmx render diagram.mmd --by agent --note "Briefly describe the edit and reason" --print-if-changed
 ```
 
-`--note` is recorded in diff.json for the next reader of the diff, usually the agent. A separate path that displays it to the human is planned for v1. If a hook already rendered the same bytes, this command is a no-op: it writes nothing and does not replace the previous diff or record a new `by`/`note`.
+`--note` is recorded in diff.json and the turn log, and `mmx serve` shows it to the human. If a hook (or `mmx serve`) already rendered the same bytes, this command is a no-op: it writes nothing and records no `by`/`note`. To attach a message anyway, or to reply without editing, use:
 
-When hooks are installed, notes for Edit/Write edits are not recorded because the hook renders first. A command to add a note is planned for v1.
+```bash
+mmx note diagram.mmd "What you want to tell the human"
+```
+
+`mmx note` always makes a turn (`--by` defaults to `agent`); unrendered edits in the file become part of it. Exit codes match `mmx render`; it prints nothing on success.
+
+## Waiting for the human
+
+After your turn, wait for the human's reply instead of polling by hand:
+
+```bash
+mmx wait diagram.mmd --timeout 300
+```
+
+- Exit 0: each printed line is one compact diff JSON of a human turn you have not answered yet (oldest first, same format as diff.json). Respond by editing the diagram and running `mmx render diagram.mmd --by agent --note "..."`, or reply without editing via `mmx note diagram.mmd "..."`. Then call `mmx wait` again.
+- Exit 3: nothing yet (timeout). Call it again, or stop. `--timeout 0` checks once.
+
+"Unanswered" means: human turns logged after the last non-human turn. With `mmx serve` running, the human speaks through the browser, and direct file edits are attributed to the agent (serve's poller renders them as `by: agent`). Without serve, `mmx wait` itself renders direct file edits (once the file is stable for two polls) as `by: human` and returns them.
+
+## Turn log
+
+Every committed turn (a successful render or a parse-error turn; never a no-op) appends one line to `<stem>.turns.jsonl`: `{"v":1,"at":<unix ms>,"by":..,"note":..,"source_sha256":..,"diff":{...}}`. When the file exceeds 2 MiB it is rewritten atomically to the newest 200 entries. Unparseable lines are skipped. `mmx serve` uses the log to show turns made by other processes and the full history; `mmx wait` reads it to find unanswered human turns. Do not edit it by hand.
 
 ## Read and respond
 
@@ -38,7 +59,7 @@ When hooks are installed, notes for Edit/Write edits are not recorded because th
 - `nodes` and `edges` report added, removed, and changed IDs/keys. A node ID rename appears as removal plus addition. `kind_changed` reports a diagram-type change.
 - `moved` reports relative node-center movement after subtracting `stats.global_shift`. `stats.mean_move_px` and `max_move_px` measure the remaining layout movement; mmx reports shifts but does not prevent them.
 - `by` says who invoked the render, not a proven author of every edit.
-- A turn can carry **no graph changes at all** — empty `nodes`/`edges` with a non-empty `note`. That is the human asking a question or leaving a comment through `mmx serve`; respond to the note (edit the diagram or answer with your own `--note`), don't dismiss it as a no-op.
+- A turn can carry **no graph changes at all** — empty `nodes`/`edges` with a non-empty `note`. That is the human asking a question or leaving a comment through `mmx serve`; respond to the note (edit the diagram, or answer with `mmx note`), don't dismiss it as a no-op.
 
 See [diff-schema.md](references/diff-schema.md) for all diff and state fields.
 
