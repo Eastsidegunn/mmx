@@ -506,3 +506,127 @@ fn mmx002_t14_loopback_alias_and_external_override() {
     );
     assert_eq!(request(external.addr, "GET", "/state", None).0, 200);
 }
+
+// ---- mmx008: turn log, `mmx wait`, `mmx note` with a live serve ----
+
+fn mmx_cmd(dir: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_mmx"))
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn mmx008_w_wait_returns_when_human_posts_to_serve() {
+    let s = start(A);
+    assert!(s.dir.join("d.serve.json").exists());
+    let mut wait = Command::new(env!("CARGO_BIN_EXE_mmx"))
+        .current_dir(&s.dir)
+        .args(["wait", "d.mmd", "--timeout", "20"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // A direct file edit under a live serve belongs to the agent: serve's
+    // poller renders it, and wait must neither render it nor return.
+    std::fs::write(s.dir.join("d.mmd"), C).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while get_json(s.addr, "/state")["seq"] != 1 {
+        assert!(Instant::now() < deadline, "poller never rendered the edit");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    std::thread::sleep(Duration::from_millis(700));
+    assert!(wait.try_wait().unwrap().is_none(), "wait returned early");
+    assert_eq!(file_json(&s.dir, "d.diff.json")["by"], "agent");
+
+    assert_eq!(post(s.addr, B, "여기 봐줘")["exit"], 0);
+    let out = wait.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    let diff: Value = serde_json::from_str(text.trim()).unwrap();
+    assert_eq!(diff["by"], "human");
+    assert_eq!(diff["note"], "여기 봐줘");
+    assert_eq!(diff["edges"]["removed"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn mmx008_w_serve_reflects_external_note() {
+    let s = start(A);
+    let mut reader = sse_connect(s.addr);
+    assert_eq!(sse_next(&mut reader)["seq"], 0);
+    let out = mmx_cmd(&s.dir, &["note", "d.mmd", "에이전트 메모"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(sse_next(&mut reader)["seq"], 1);
+    let state = get_json(s.addr, "/state");
+    assert_eq!(state["seq"], 1);
+    assert_eq!(state["by"], "agent");
+    assert_eq!(state["note"], "에이전트 메모");
+    // Exactly one event for it.
+    reader
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_millis(900)))
+        .unwrap();
+    let mut line = String::new();
+    assert!(
+        reader.read_line(&mut line).is_err(),
+        "duplicate event: {line:?}"
+    );
+}
+
+#[test]
+fn mmx008_w_base_seq_taken_before_external_note_is_stale() {
+    let s = start(A);
+    let seq = get_json(s.addr, "/state")["seq"].as_u64().unwrap();
+    assert!(mmx_cmd(&s.dir, &["note", "d.mmd", "에이전트가 먼저"])
+        .status
+        .success());
+    // Immediately, before serve's poller has had a chance to fold it in.
+    let (status, body) = request(
+        s.addr,
+        "POST",
+        "/turn",
+        Some(&json!({"source":A,"note":"사람 질문","base_seq":seq})),
+    );
+    assert_eq!(status, 409, "{}", String::from_utf8_lossy(&body));
+}
+
+#[test]
+fn mmx008_w_history_lists_turns_across_restart() {
+    let first = start(A);
+    assert_eq!(post(first.addr, B, "하나")["exit"], 0);
+    assert!(mmx_cmd(&first.dir, &["note", "d.mmd", "답"])
+        .status
+        .success());
+    assert_eq!(
+        post(first.addr, "flowchart LR\n    --> B\n", "깨짐")["exit"],
+        2
+    );
+    let second = start_dir(first.dir.clone(), &[]);
+    let history = get_json(second.addr, "/history");
+    let entries = history["entries"].as_array().unwrap();
+    let by: Vec<&str> = entries.iter().map(|e| e["by"].as_str().unwrap()).collect();
+    // Turns from before the restart, from both serve and the CLI. (The
+    // restart's own render of the still-broken file may add one more.)
+    assert_eq!(by[..4], ["serve", "human", "agent", "human"]);
+    assert_eq!(entries[1]["note"], "하나");
+    assert_eq!(entries[1]["summary"]["nodes_added"], 1);
+    assert_eq!(entries[1]["summary"]["edges_added"], 1);
+    assert_eq!(entries[1]["summary"]["error"], Value::Null);
+    assert_eq!(entries[2]["note"], "답");
+    assert_eq!(entries[2]["summary"]["nodes_added"], 0);
+    assert!(entries[3]["summary"]["error"].is_string());
+    assert!(entries[1]["at"].as_u64().unwrap() <= entries[2]["at"].as_u64().unwrap());
+    // Same Host protection as the other routes.
+    assert_eq!(
+        raw_request(
+            second.addr,
+            "GET /history HTTP/1.1\r\nHost: evil.example\r\n\r\n"
+        )
+        .0,
+        403
+    );
+    let (status, page) = request(second.addr, "GET", "/", None);
+    assert_eq!(status, 200);
+    assert!(String::from_utf8(page).unwrap().contains("/history"));
+}

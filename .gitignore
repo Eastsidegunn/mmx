@@ -5,3 +5,5 @@ examples/*.svg
 examples/*.diff.json
 examples/*.state.json
 .claude/
+examples/*.turns.jsonl
+*.serve.json

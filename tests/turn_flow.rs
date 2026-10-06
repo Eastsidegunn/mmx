@@ -571,3 +571,172 @@ fn init_installs_skill_and_hooks() {
     );
     assert!(project.join(".claude/settings.mmx.json").exists());
 }
+
+// ---- mmx008: turn log, `mmx note`, `mmx wait` (no serve) ----
+
+const W_A: &str = "flowchart LR\n    A --> B\n";
+const W_B: &str = "flowchart LR\n    A --> B\n    B --> C\n";
+const W_BAD: &str = "flowchart LR\n    --> B\n";
+
+fn log_entries(dir: &Path) -> Vec<Value> {
+    std::fs::read_to_string(dir.join("d.turns.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+fn ok(dir: &Path, args: &[&str]) {
+    let out = mmx(dir, args);
+    assert!(out.status.success(), "{args:?}: {out:?}");
+}
+
+#[test]
+fn mmx008_w_log_appends_on_ok_and_parse_error_not_noop() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", W_A);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    assert_eq!(log_entries(&dir).len(), 1);
+    // No-op: nothing appended.
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    assert_eq!(log_entries(&dir).len(), 1);
+    write(&dir, "d.mmd", W_BAD);
+    let out = mmx(
+        &dir,
+        &["render", "d.mmd", "--by", "human", "--note", "oops"],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    write(&dir, "d.mmd", W_B);
+    ok(&dir, &["render", "d.mmd", "--by", "human", "--note", "fix"]);
+    let entries = log_entries(&dir);
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0]["v"], 1);
+    assert_eq!(entries[0]["by"], "agent");
+    assert_eq!(entries[0]["note"], Value::Null);
+    assert!(entries[0]["at"].as_u64().unwrap() > 0);
+    assert_eq!(entries[0]["diff"]["baseline"], true);
+    assert_eq!(entries[1]["by"], "human");
+    assert_eq!(entries[1]["note"], "oops");
+    assert_eq!(entries[1]["diff"]["error"]["kind"], "parse");
+    assert_eq!(entries[2]["note"], "fix");
+    assert_eq!(entries[2]["diff"], read_json(&dir.join("d.diff.json")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn mmx008_w_note_is_a_turn_and_includes_unrendered_edits() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", W_A);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    let out = mmx(&dir, &["note", "d.mmd", "보셨나요?"]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(out.stdout.is_empty());
+    let diff = read_json(&dir.join("d.diff.json"));
+    assert_eq!(diff["by"], "agent");
+    assert_eq!(diff["note"], "보셨나요?");
+    assert_eq!(diff["source_changed"], false);
+    assert_eq!(diff["nodes"]["added"], json!([]));
+    let entries = log_entries(&dir);
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1]["note"], "보셨나요?");
+
+    // Unrendered edits ride along with the note.
+    write(&dir, "d.mmd", W_B);
+    ok(&dir, &["note", "d.mmd", "C 추가", "--by", "bot"]);
+    let diff = read_json(&dir.join("d.diff.json"));
+    assert_eq!(diff["by"], "bot");
+    assert_eq!(diff["note"], "C 추가");
+    assert_eq!(diff["source_changed"], true);
+    assert_eq!(
+        diff["nodes"]["added"],
+        json!([{"id":"C","label":"C","shape":"Rectangle"}])
+    );
+    assert_eq!(log_entries(&dir).len(), 3);
+
+    // A parse error is still exit 2.
+    write(&dir, "d.mmd", W_BAD);
+    assert_eq!(mmx(&dir, &["note", "d.mmd", "x"]).status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn mmx008_w_wait_returns_pending_human_turns_immediately() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", W_A);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    write(&dir, "d.mmd", W_B);
+    ok(&dir, &["render", "d.mmd", "--by", "human", "--note", "one"]);
+    ok(&dir, &["note", "d.mmd", "two", "--by", "human"]);
+    let start = std::time::Instant::now();
+    let out = mmx(&dir, &["wait", "d.mmd", "--timeout", "10"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(2));
+    let lines: Vec<Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["note"], "one");
+    assert_eq!(
+        lines[0]["nodes"]["added"],
+        json!([{"id":"C","label":"C","shape":"Rectangle"}])
+    );
+    assert_eq!(lines[1]["note"], "two");
+
+    // Once the agent answers, nothing is pending: timeout -> exit 3.
+    ok(&dir, &["note", "d.mmd", "답변"]);
+    let start = std::time::Instant::now();
+    let out = mmx(&dir, &["wait", "d.mmd", "--timeout", "1"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    assert!(out.stdout.is_empty());
+    assert!(start.elapsed() < std::time::Duration::from_secs(3));
+    let out = mmx(&dir, &["wait", "d.mmd", "--timeout", "0"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn mmx008_w_wait_without_serve_renders_direct_edit_as_human() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", W_A);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    let child = Command::new(env!("CARGO_BIN_EXE_mmx"))
+        .current_dir(&dir)
+        .args(["wait", "d.mmd", "--timeout", "15"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    write(&dir, "d.mmd", W_B);
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    let diff: Value = serde_json::from_str(text.trim()).unwrap();
+    assert_eq!(diff["by"], "human");
+    assert_eq!(
+        diff["nodes"]["added"],
+        json!([{"id":"C","label":"C","shape":"Rectangle"}])
+    );
+    assert_eq!(read_json(&dir.join("d.diff.json"))["by"], "human");
+    assert_eq!(log_entries(&dir).last().unwrap()["by"], "human");
+
+    // A direct parse-error edit is rendered once, and not again after the
+    // agent answers on the same broken bytes.
+    ok(&dir, &["note", "d.mmd", "받았어요"]);
+    write(&dir, "d.mmd", W_BAD);
+    let out = mmx(&dir, &["wait", "d.mmd", "--timeout", "0"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let diff: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(diff["error"]["kind"], "parse");
+    assert_eq!(
+        mmx(&dir, &["note", "d.mmd", "고쳐볼게요"]).status.code(),
+        Some(2)
+    );
+    let before = log_entries(&dir).len();
+    let out = mmx(&dir, &["wait", "d.mmd", "--timeout", "1"]);
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
+    assert_eq!(log_entries(&dir).len(), before);
+    let _ = std::fs::remove_dir_all(&dir);
+}

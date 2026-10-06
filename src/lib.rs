@@ -9,6 +9,7 @@ pub mod render;
 pub mod serve;
 pub mod source_diff;
 pub mod state;
+pub mod turnlog;
 
 use std::path::{Path, PathBuf};
 
@@ -44,6 +45,9 @@ pub struct RenderJob {
     /// diff). Serve uses this for note-only turns; the CLI leaves it false,
     /// keeping the no-op contract.
     pub force_turn: bool,
+    /// Turn log (`<stem>.turns.jsonl`) to append each committed turn to
+    /// (see [`turnlog`]). `None` disables logging.
+    pub log: Option<PathBuf>,
 }
 
 /// Outcome of a render turn, mapped to exit codes by main.
@@ -62,6 +66,9 @@ pub struct TurnResult {
     pub outcome: TurnOutcome,
     /// diff.json content to print on stdout (`--print-if-changed`).
     pub print: Option<String>,
+    /// The line appended to the turn log for this turn (without newline),
+    /// if one was written. Lets `mmx serve` recognise its own entries.
+    pub logged: Option<String>,
 }
 
 enum Prev {
@@ -106,6 +113,7 @@ pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnRes
             return Ok(TurnResult {
                 outcome: TurnOutcome::NoOp,
                 print: None,
+                logged: None,
             });
         }
     }
@@ -121,21 +129,25 @@ pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnRes
         Ok(s) => s,
         Err(e) => {
             let err = render::encoding_error(bytes, e);
-            return emit_turn_error(job, emit::DiffReport::turn_error(by, note, &err, warnings));
+            return emit_turn_error(
+                job,
+                &source_hash,
+                emit::DiffReport::turn_error(by, note, &err, warnings),
+            );
         }
     };
 
     if let Err(err) = lint::check(source) {
         let mut report = emit::DiffReport::turn_error(by, note, &err, warnings);
         report.set_source_hunks(previous_source(&prev), source);
-        return emit_turn_error(job, report);
+        return emit_turn_error(job, &source_hash, report);
     }
     let rendered = match render::render_turn(source) {
         Ok(r) => r,
         Err(err) => {
             let mut report = emit::DiffReport::turn_error(by, note, &err, warnings);
             report.set_source_hunks(previous_source(&prev), source);
-            return emit_turn_error(job, report);
+            return emit_turn_error(job, &source_hash, report);
         }
     };
 
@@ -177,10 +189,12 @@ pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnRes
     }
 
     emit::write_atomic(&job.out_state, state_json.as_bytes())?;
+    let logged = log_turn(job, &source_hash, &diff_json);
 
     Ok(TurnResult {
         outcome: TurnOutcome::Ok,
         print: (job.print_if_changed && report.is_printable()).then_some(diff_json),
+        logged,
     })
 }
 
@@ -191,13 +205,37 @@ fn previous_source(prev: &Prev) -> Option<&str> {
     }
 }
 
-fn emit_turn_error(job: &RenderJob, report: emit::DiffReport) -> anyhow::Result<TurnResult> {
+fn emit_turn_error(
+    job: &RenderJob,
+    source_hash: &str,
+    report: emit::DiffReport,
+) -> anyhow::Result<TurnResult> {
     let diff_json = report.to_json()?;
     emit::write_atomic(&job.out_diff, diff_json.as_bytes())?;
+    let logged = log_turn(job, source_hash, &diff_json);
     Ok(TurnResult {
         outcome: TurnOutcome::ParseError,
         print: (job.print_if_changed && report.is_printable()).then_some(diff_json),
+        logged,
     })
+}
+
+/// Append the committed turn to the turn log. Best effort: the turn is
+/// already committed, so a log failure only warns on stderr.
+fn log_turn(job: &RenderJob, source_hash: &str, diff_json: &str) -> Option<String> {
+    let log = job.log.as_ref()?;
+    let result = turnlog::entry_line(&job.by, job.note.as_deref(), source_hash, diff_json)
+        .and_then(|line| turnlog::append(log, &line).map(|()| line));
+    match result {
+        Ok(line) => Some(line),
+        Err(e) => {
+            eprintln!(
+                "mmx: warning: cannot append turn log {}: {e:#}",
+                log.display()
+            );
+            None
+        }
+    }
 }
 
 /// Best effort: does the diff.json on disk carry a non-null `error`?
@@ -259,6 +297,24 @@ fn normalize(p: &Path) -> PathBuf {
             .map(|c| c.join(name))
             .unwrap_or_else(|_| abs.clone()),
         _ => abs,
+    }
+}
+
+/// A turn job with every output at its default sibling path (`<stem>.svg`,
+/// `.diff.json`, `.state.json`) and the turn log at `<stem>.turns.jsonl`.
+pub fn default_job(input: &Path, by: &str, note: Option<String>) -> RenderJob {
+    let out_state = sibling(input, "state.json");
+    RenderJob {
+        input: input.to_path_buf(),
+        by: by.to_owned(),
+        note,
+        prev: PrevSource::Default(out_state.clone()),
+        out_svg: sibling(input, "svg"),
+        out_diff: sibling(input, "diff.json"),
+        out_state,
+        print_if_changed: false,
+        force_turn: false,
+        log: Some(sibling(input, "turns.jsonl")),
     }
 }
 
