@@ -8,3 +8,7 @@ examples/*.state.json
 examples/*.turns.jsonl
 *.serve.json
 examples/demo/node_modules
+adapters/tiro/example/*.svg
+adapters/tiro/example/*.diff.json
+adapters/tiro/example/*.state.json
+adapters/tiro/example/*.turns.jsonl

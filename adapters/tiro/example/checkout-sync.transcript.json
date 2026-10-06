@@ -1,0 +1,22 @@
+{
+  "_comment": "Synthetic meeting for the mmx-meeting example. Shape follows `tiro notes transcript <id> --format json`; all people and content are invented.",
+  "noteGuid": "example-0000",
+  "title": "Checkout sync",
+  "participants": ["Mina", "Jun", "Ravi"],
+  "createdAt": "2026-10-05T09:00:00Z",
+  "recordingDurationSeconds": 1260,
+  "paragraphs": [
+    { "speaker": "Jun", "start": "00:40", "text": "Drop-off at the address step is still 31 percent. I think the multi-page flow is the problem." },
+    { "speaker": "Mina", "start": "02:05", "text": "The one-page test last month cut it to 19 percent on mobile." },
+    { "speaker": "Jun", "start": "04:12", "text": "Then let's ship the one-page checkout. Agreed?" },
+    { "speaker": "Ravi", "start": "04:20", "text": "Agreed. Mina, can you have a prototype by Friday?" },
+    { "speaker": "Mina", "start": "04:31", "text": "Friday works." },
+    { "speaker": "Ravi", "start": "06:50", "text": "What about guest checkout? Legal wanted accounts for refunds." },
+    { "speaker": "Jun", "start": "07:30", "text": "We don't know yet. Someone has to ask legal." },
+    { "speaker": "Ravi", "start": "11:15", "text": "Payments: we move to the new provider in November. I'll draft the migration plan." },
+    { "speaker": "Mina", "start": "12:02", "text": "Card-on-file tokens need to be migrated too, otherwise returning users re-enter cards." },
+    { "speaker": "Jun", "start": "12:40", "text": "Ravi, include token migration in the plan. Due end of next week." },
+    { "speaker": "Ravi", "start": "17:30", "text": "Should we keep PayPal at all? Usage is under 3 percent." },
+    { "speaker": "Jun", "start": "18:05", "text": "Let's decide that next week with the numbers." }
+  ]
+}
