@@ -250,7 +250,7 @@ fn mmx002_t5_noop_preserves_diff_bytes() {
 
 #[test]
 fn mmx005_note_only_turn_is_a_real_turn() {
-    // [H] 2026-10-05: a note with zero diagram changes is a turn — the
+    // A note with zero diagram changes is a turn — the
     // human asking a question. It bumps seq and lands in diff.json.
     let s = start(A);
     post(s.addr, B, "첫 턴");

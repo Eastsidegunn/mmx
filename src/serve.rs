@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{publish, run_render_bytes, sibling, state, PrevSource, RenderJob, TurnOutcome};
+use crate::{run_render_bytes, sibling, state, PrevSource, RenderJob, TurnOutcome};
 
 pub const POLL_INTERVAL_MS: u64 = 300;
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
@@ -29,7 +29,6 @@ struct Shared {
     observed_hash: String,
     pending_hash: Option<String>,
     subscribers: Vec<mpsc::Sender<u64>>,
-    publisher: Option<publish::Publisher>,
 }
 
 #[derive(Deserialize)]
@@ -48,14 +47,7 @@ struct Request {
     content_type: Option<String>,
 }
 
-pub fn run(
-    input: PathBuf,
-    addr: &str,
-    allow_external: bool,
-    rhizome: Option<String>,
-    bind: Option<String>,
-) -> Result<()> {
-    let publisher = publish::start(rhizome, bind)?;
+pub fn run(input: PathBuf, addr: &str, allow_external: bool) -> Result<()> {
     let addresses: Vec<SocketAddr> = addr
         .to_socket_addrs()
         .with_context(|| format!("invalid listen address {addr}"))?
@@ -98,16 +90,7 @@ pub fn run(
         observed_hash: hash,
         pending_hash: None,
         subscribers: Vec::new(),
-        publisher,
     }));
-    if result.outcome == TurnOutcome::Ok {
-        enqueue(
-            &shared.lock().unwrap_or_else(|e| e.into_inner()),
-            &job,
-            0,
-            &bytes,
-        );
-    }
     let poll_shared = Arc::clone(&shared);
     thread::spawn(move || poll(poll_shared));
 
@@ -190,9 +173,6 @@ fn poll(shared: Arc<Mutex<Shared>>) {
                 shared.by = "agent".to_owned();
                 shared.note = None;
                 let seq = shared.seq;
-                if result.outcome == TurnOutcome::Ok {
-                    enqueue(&shared, &job, seq, &bytes);
-                }
                 shared.subscribers.retain(|tx| tx.send(seq).is_ok());
             }
             Err(error) => eprintln!("mmx serve: render external change: {error:#}"),
@@ -465,8 +445,8 @@ fn apply_turn(shared: &mut Shared, turn: TurnInput) -> Result<(u16, Value)> {
         shared.pending_hash = None;
     }
     // A note with zero diagram changes is still a turn — the human asking a
-    // question ([H] 2026-10-05). force_turn emits the zero-change diff
-    // through the ordinary pipeline, so the board publish happens too.
+    // question. force_turn emits the zero-change diff through the ordinary
+    // pipeline (diff/state/svg written, seq bumped, subscribers notified).
     let note_only = turn
         .note
         .as_deref()
@@ -481,9 +461,6 @@ fn apply_turn(shared: &mut Shared, turn: TurnInput) -> Result<(u16, Value)> {
     shared.by = "human".to_owned();
     shared.note = turn.note;
     let seq = shared.seq;
-    if result.outcome == TurnOutcome::Ok {
-        enqueue(shared, &job, seq, turn.source.as_bytes());
-    }
     shared.subscribers.retain(|tx| tx.send(seq).is_ok());
     let diff = read_json(&job.out_diff)?;
     if result.outcome == TurnOutcome::ParseError {
@@ -499,17 +476,6 @@ fn apply_turn(shared: &mut Shared, turn: TurnInput) -> Result<(u16, Value)> {
         200,
         json!({"exit": 0, "state": state, "diff": diff, "svg": svg}),
     ))
-}
-
-// MMX-003: copy all three artifacts at the commit point before another turn can replace them.
-fn enqueue(shared: &Shared, job: &RenderJob, seq: u64, mmd: &[u8]) {
-    let Some(publisher) = &shared.publisher else {
-        return;
-    };
-    match publish::Turn::read(job, seq, mmd) {
-        Ok(turn) => publisher.enqueue(turn),
-        Err(error) => eprintln!("mmx serve: cannot queue Rhizome turn: {error:#}"),
-    }
 }
 
 fn events(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) -> Result<()> {
