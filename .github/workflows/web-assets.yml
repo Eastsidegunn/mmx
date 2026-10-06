@@ -1,0 +1,44 @@
+# Attaches the browser pieces to each GitHub release: the <mmx-editor>
+# component and the wasm build of a full mmx turn. Runs on the version tag
+# and waits for the release that the dist workflow (release.yml) creates;
+# a release made with GITHUB_TOKEN does not trigger `release` events.
+name: Web assets
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  web-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wasm
+      - name: Build mmx_wasm.wasm
+        run: cargo build --manifest-path wasm/Cargo.toml --target wasm32-wasip1 --release
+      - name: Wait for the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 60); do
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && exit 0
+            sleep 30
+          done
+          echo "release $GITHUB_REF_NAME did not appear within 30 minutes" >&2
+          exit 1
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            wasm/target/wasm32-wasip1/release/mmx_wasm.wasm \
+            editor/mmx-editor.js
