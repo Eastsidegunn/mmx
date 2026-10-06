@@ -2,6 +2,16 @@
 
 All notable changes to mmx are documented here. This follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - Unreleased
+
+### Fixed
+
+- `mmx doctor` now requires the Codex skill whenever project hooks reference the mmx runner, even if `~/.codex` is missing.
+
+### Documentation
+
+- Documented the `mmx serve` HTTP API and corrected the wasm loader input-error behavior in `wasm/README.md`.
+
 ## [0.4.1] - 2026-10-06
 
 ### Added

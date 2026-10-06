@@ -169,6 +169,7 @@ fn fixed_routes_and_traversal() {
     assert!(page.contains("const translations = {"));
     assert!(page.contains("const requestedLang = new URLSearchParams(location.search).get('lang')"));
     assert!(page.contains("you: 'You'"));
+    // The embedded locale table deliberately retains non-ASCII translations.
     assert!(page.contains("you: '나'"));
     // The language switch is a query string on the same route.
     for query in ["/?lang=ko", "/?lang=en"] {
@@ -200,7 +201,7 @@ fn initial_state_is_stable_baseline() {
 #[test]
 fn human_turn_writes_diff_and_state() {
     let s = start(A);
-    let result = post(s.addr, B, "추가");
+    let result = post(s.addr, B, "add");
     assert_eq!(result["exit"], 0);
     assert!(result["svg"].as_str().unwrap().contains("<svg"));
     assert!(result["state"].get("svg").is_none());
@@ -211,7 +212,7 @@ fn human_turn_writes_diff_and_state() {
     assert_eq!(std::fs::read_to_string(s.dir.join("d.mmd")).unwrap(), B);
     let diff = file_json(&s.dir, "d.diff.json");
     assert_eq!(diff["by"], "human");
-    assert_eq!(diff["note"], "추가");
+    assert_eq!(diff["note"], "add");
     let state = get_json(s.addr, "/state");
     assert_eq!(
         mmx::state::hex_sha256(state["source"].as_str().unwrap().as_bytes()),
@@ -219,7 +220,7 @@ fn human_turn_writes_diff_and_state() {
     );
     assert_eq!(state["nodes"], file_json(&s.dir, "d.state.json")["nodes"]);
     assert_eq!(state["by"], "human");
-    assert_eq!(state["note"], "추가");
+    assert_eq!(state["note"], "add");
 }
 
 #[test]
@@ -228,14 +229,14 @@ fn parse_error_keeps_last_valid_artifacts() {
     let svg = std::fs::read(s.dir.join("d.svg")).unwrap();
     let state = std::fs::read(s.dir.join("d.state.json")).unwrap();
     let bad = "flowchart LR\n    --> B\n";
-    let result = post(s.addr, bad, "오류");
+    let result = post(s.addr, bad, "error");
     assert_eq!(result["exit"], 2);
     assert_eq!(result["diff"]["error"]["kind"], "parse");
     assert_eq!(result["diff"]["error"]["line"], 2);
     assert_eq!(std::fs::read_to_string(s.dir.join("d.mmd")).unwrap(), bad);
     assert_eq!(std::fs::read(s.dir.join("d.svg")).unwrap(), svg);
     assert_eq!(std::fs::read(s.dir.join("d.state.json")).unwrap(), state);
-    assert_eq!(post(s.addr, B, "복구")["exit"], 0);
+    assert_eq!(post(s.addr, B, "recover")["exit"], 0);
     assert_eq!(
         mmx::state::hex_sha256(
             get_json(s.addr, "/state")["source"]
@@ -252,7 +253,7 @@ fn noop_preserves_diff_bytes() {
     // Identical source with no note (or a whitespace note) stays a no-op;
     // a real note makes it a turn instead.
     let s = start(A);
-    post(s.addr, B, "첫 턴");
+    post(s.addr, B, "first turn");
     let diff = std::fs::read(s.dir.join("d.diff.json")).unwrap();
     for empty in ["", "   "] {
         let result = post(s.addr, B, empty);
@@ -267,8 +268,9 @@ fn note_only_turn_is_a_real_turn() {
     // A note with zero diagram changes is a turn — the
     // human asking a question. It bumps seq and lands in diff.json.
     let s = start(A);
-    post(s.addr, B, "첫 턴");
+    post(s.addr, B, "first turn");
     let before = get_json(s.addr, "/state");
+    // Non-ASCII notes are kept here to exercise UTF-8 HTTP handling.
     let result = post(s.addr, B, "이 흐름 맞아?");
     assert_eq!(result["exit"], 0, "{result}");
     assert_ne!(result["noop"], true, "{result}");
@@ -292,14 +294,14 @@ fn unpolled_agent_edit_conflicts_instead_of_overwrite() {
     // edit becomes a turn. A human submit in that window used to overwrite
     // the agent's file silently (base_seq cannot catch it: seq is unmoved).
     let s = start(A);
-    post(s.addr, B, "첫 턴");
+    post(s.addr, B, "first turn");
     let agent_edit = "flowchart TD\n    A --> B\n    B --> AGENT_NEW\n";
     std::fs::write(s.dir.join("d.mmd"), agent_edit).unwrap();
     let (status, body) = request(
         s.addr,
         "POST",
         "/turn",
-        Some(&json!({"source":B,"note":"질문 하나","base_seq":1})),
+        Some(&json!({"source":B,"note":"one question","base_seq":1})),
     );
     assert_eq!(status, 409, "{}", String::from_utf8_lossy(&body));
     let conflict: Value = serde_json::from_slice(&body).unwrap();
@@ -373,7 +375,7 @@ fn concurrent_turns_are_serialized() {
             let addr = s.addr;
             std::thread::spawn(move || {
                 barrier.wait();
-                post(addr, source, "동시")
+                post(addr, source, "concurrent")
             })
         })
         .collect();
@@ -550,14 +552,14 @@ fn wait_returns_when_human_posts_to_serve() {
     assert!(wait.try_wait().unwrap().is_none(), "wait returned early");
     assert_eq!(file_json(&s.dir, "d.diff.json")["by"], "agent");
 
-    assert_eq!(post(s.addr, B, "여기 봐줘")["exit"], 0);
+    assert_eq!(post(s.addr, B, "please review")["exit"], 0);
     let out = wait.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(text.lines().count(), 1, "{text}");
     let diff: Value = serde_json::from_str(text.trim()).unwrap();
     assert_eq!(diff["by"], "human");
-    assert_eq!(diff["note"], "여기 봐줘");
+    assert_eq!(diff["note"], "please review");
     assert_eq!(diff["edges"]["removed"].as_array().unwrap().len(), 1);
 }
 
@@ -566,13 +568,13 @@ fn serve_reflects_external_note() {
     let s = start(A);
     let mut reader = sse_connect(s.addr);
     assert_eq!(sse_next(&mut reader)["seq"], 0);
-    let out = mmx_cmd(&s.dir, &["note", "d.mmd", "에이전트 메모"]);
+    let out = mmx_cmd(&s.dir, &["note", "d.mmd", "agent memo"]);
     assert!(out.status.success(), "{out:?}");
     assert_eq!(sse_next(&mut reader)["seq"], 1);
     let state = get_json(s.addr, "/state");
     assert_eq!(state["seq"], 1);
     assert_eq!(state["by"], "agent");
-    assert_eq!(state["note"], "에이전트 메모");
+    assert_eq!(state["note"], "agent memo");
     // Exactly one event for it.
     reader
         .get_mut()
@@ -589,7 +591,7 @@ fn serve_reflects_external_note() {
 fn base_seq_taken_before_external_note_is_stale() {
     let s = start(A);
     let seq = get_json(s.addr, "/state")["seq"].as_u64().unwrap();
-    assert!(mmx_cmd(&s.dir, &["note", "d.mmd", "에이전트가 먼저"])
+    assert!(mmx_cmd(&s.dir, &["note", "d.mmd", "agent first"])
         .status
         .success());
     // Immediately, before serve's poller has had a chance to fold it in.
@@ -597,7 +599,7 @@ fn base_seq_taken_before_external_note_is_stale() {
         s.addr,
         "POST",
         "/turn",
-        Some(&json!({"source":A,"note":"사람 질문","base_seq":seq})),
+        Some(&json!({"source":A,"note":"human question","base_seq":seq})),
     );
     assert_eq!(status, 409, "{}", String::from_utf8_lossy(&body));
 }
@@ -605,12 +607,12 @@ fn base_seq_taken_before_external_note_is_stale() {
 #[test]
 fn history_lists_turns_across_restart() {
     let first = start(A);
-    assert_eq!(post(first.addr, B, "하나")["exit"], 0);
-    assert!(mmx_cmd(&first.dir, &["note", "d.mmd", "답"])
+    assert_eq!(post(first.addr, B, "one")["exit"], 0);
+    assert!(mmx_cmd(&first.dir, &["note", "d.mmd", "answer"])
         .status
         .success());
     assert_eq!(
-        post(first.addr, "flowchart LR\n    --> B\n", "깨짐")["exit"],
+        post(first.addr, "flowchart LR\n    --> B\n", "broken")["exit"],
         2
     );
     let second = start_dir(first.dir.clone(), &[]);
@@ -620,11 +622,11 @@ fn history_lists_turns_across_restart() {
     // Turns from before the restart, from both serve and the CLI. (The
     // restart's own render of the still-broken file may add one more.)
     assert_eq!(by[..4], ["serve", "human", "agent", "human"]);
-    assert_eq!(entries[1]["note"], "하나");
+    assert_eq!(entries[1]["note"], "one");
     assert_eq!(entries[1]["summary"]["nodes_added"], 1);
     assert_eq!(entries[1]["summary"]["edges_added"], 1);
     assert_eq!(entries[1]["summary"]["error"], Value::Null);
-    assert_eq!(entries[2]["note"], "답");
+    assert_eq!(entries[2]["note"], "answer");
     assert_eq!(entries[2]["summary"]["nodes_added"], 0);
     assert!(entries[3]["summary"]["error"].is_string());
     assert!(entries[1]["at"].as_u64().unwrap() <= entries[2]["at"].as_u64().unwrap());

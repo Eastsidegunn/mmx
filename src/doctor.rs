@@ -212,9 +212,11 @@ pub fn run(diagram: Option<&Path>) -> bool {
             "Claude Code",
             "mmx init",
         );
-        if home.join(".codex").exists() {
-            let codex_skill = home.join(".codex/skills/mmx/SKILL.md");
-            let codex_hooks_reference_runner = !codex.is_empty();
+        let codex_skill = home.join(".codex/skills/mmx/SKILL.md");
+        let codex_hooks_reference_runner = !codex.is_empty();
+        if codex_hooks_reference_runner || home.join(".codex").exists() {
+            // Project hooks make the Codex skill mandatory even when the
+            // user's ~/.codex directory has been removed.
             if codex_hooks_reference_runner || codex_skill.exists() {
                 good &= skill(&codex_skill, "Codex", "mmx init --codex");
             } else {

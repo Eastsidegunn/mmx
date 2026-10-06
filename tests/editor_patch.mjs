@@ -44,13 +44,13 @@ const edge = (m, key) => {
 };
 
 const OPS = `flowchart TD
-    %% 점선 = 아직 안 붙은 연결
-    subgraph team [팀]
-        A[요청] -.-> B{검토}
+    %% dashed = connection not yet attached
+    subgraph team [Team]
+        A[Request] -.-> B{Review}
     end
-    B ==>|승인| C[배포]
-    B -- 반려 --> D[반려]
-    C -.->|E2| E((관측))
+    B ==>|Approve| C[Deploy]
+    B -- Reject --> D[Reject]
+    C -.->|E2| E((Observe))
     D --> E
     classDef warn fill:#fdd
     class D warn
@@ -61,37 +61,37 @@ const cases = [
   {
     name: "rename keeps dashed/thick arrows, comment, subgraph, classDef",
     src: OPS,
-    edit(m) { m.nodes.C.label = "배포 승인됨"; m.nodes.C.modified = true; },
-    expect(s) { s.nodes.C.label = "배포 승인됨"; },
-    keep: ["%% 점선", "subgraph team [팀]", "A[요청] -.-> B{검토}", "B ==>|승인| C[배포 승인됨]", "-.->|E2|", "classDef warn", "class D warn", "style C"],
+    edit(m) { m.nodes.C.label = "Approved deploy"; m.nodes.C.modified = true; },
+    expect(s) { s.nodes.C.label = "Approved deploy"; },
+    keep: ["%% dashed", "subgraph team [Team]", "A[Request] -.-> B{Review}", "B ==>|Approve| C[Approved deploy]", "-.->|E2|", "classDef warn", "class D warn", "style C"],
   },
   {
     name: "rename a node with special chars quotes it, shape kept",
     src: OPS,
-    edit(m) { m.nodes.E.label = "관측 (E2)"; m.nodes.E.modified = true; },
-    expect(s) { s.nodes.E.label = "관측 (E2)"; },
-    keep: ['E(("관측 (E2)"))', "-.->|E2|"],
+    edit(m) { m.nodes.E.label = "Observe (E2)"; m.nodes.E.modified = true; },
+    expect(s) { s.nodes.E.label = "Observe (E2)"; },
+    keep: ['E(("Observe (E2)"))', "-.->|E2|"],
   },
   {
     name: "edge label change keeps dashed style",
     src: OPS,
     edit(m) { const e = edge(m, "C->E#0"); e.origLabel = e.label; e.label = "E3"; e.labelChanged = true; },
     expect(s) { s.edges.find((e) => e.key === "C->E#0").label = "E3"; },
-    keep: ["C -.->|E3| E((관측))", "A[요청] -.-> B{검토}"],
+    keep: ["C -.->|E3| E((Observe))", "A[Request] -.-> B{Review}"],
   },
   {
     name: "text-form label change converts to pipe, same arrow type",
     src: OPS,
-    edit(m) { const e = edge(m, "B->D#0"); e.label = "보류"; e.labelChanged = true; },
-    expect(s) { s.edges.find((e) => e.key === "B->D#0").label = "보류"; },
-    keep: ["B -->|보류| D[반려]"],
+    edit(m) { const e = edge(m, "B->D#0"); e.label = "Hold"; e.labelChanged = true; },
+    expect(s) { s.edges.find((e) => e.key === "B->D#0").label = "Hold"; },
+    keep: ["B -->|Hold| D[Reject]"],
   },
   {
     name: "edge delete removes only that statement",
     src: OPS,
     edit(m) { edge(m, "D->E#0").deleted = true; },
     expect(s) { s.edges = s.edges.filter((e) => e.key !== "D->E#0"); },
-    keep: ["-.->|E2|", "A[요청] -.-> B{검토}"],
+    keep: ["-.->|E2|", "A[Request] -.-> B{Review}"],
     absent: ["D --> E"],
   },
   {
@@ -103,27 +103,27 @@ const cases = [
       s.edges = s.edges.filter((e) => e.from !== "D" && e.to !== "D");
     },
     keep: ["-.->|E2|", "classDef warn", "style C"],
-    absent: ["class D warn", "반려"],
+    absent: ["class D warn", "Reject"],
   },
   {
     name: "new edge + fresh node appended, everything else verbatim",
     src: OPS,
     edit(m) {
-      m.nodes.n1 = { label: "새 노드", shape: "Rectangle", fresh: true };
-      m.edges.push({ from: "E", to: "n1", label: "다음", pending: true });
+      m.nodes.n1 = { label: "New node", shape: "Rectangle", fresh: true };
+      m.edges.push({ from: "E", to: "n1", label: "Next", pending: true });
     },
     expect(s) {
-      s.nodes.n1 = { label: "새 노드" };
-      s.edges.push({ from: "E", to: "n1", label: "다음" });
+      s.nodes.n1 = { label: "New node" };
+      s.edges.push({ from: "E", to: "n1", label: "Next" });
     },
     keepPrefix: true,
   },
   {
     name: "chain split: delete the middle link keeps both ends",
-    src: "flowchart LR\n    A[가] -.-> B[나] ==> C[다]\n",
+    src: "flowchart LR\n    A[One] -.-> B[Two] ==> C[Three]\n",
     edit(m) { edge(m, "A->B#0").deleted = true; },
     expect(s) { s.edges = s.edges.filter((e) => e.key !== "A->B#0"); },
-    keep: ["B[나] ==> C[다]"],
+    keep: ["B[Two] ==> C[Three]"],
   },
   {
     name: "parallel edges: delete the second occurrence only",
@@ -135,7 +135,7 @@ const cases = [
   },
   {
     name: "bare node whose only edge is deleted survives as a declaration",
-    src: "flowchart LR\n    A[가] --> B\n",
+    src: "flowchart LR\n    A[One] --> B\n",
     edit(m) { edge(m, "A->B#0").deleted = true; },
     expect(s) { s.edges = []; },
   },

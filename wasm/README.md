@@ -78,7 +78,7 @@ Output, one of:
 | `0` | `{exit, svg, diff, state}` | rendered. Store `state` as the next `prev_state`. |
 | `0` | `{exit, noop: true}` | `source` has the same hash as `prev_state`: nothing to say. |
 | `2` | `{exit, diff}` | fixable parse/lint error: `diff.error` has `kind`, `message`, `line`, `column`. No `svg`/`state`; keep the old `prev_state`. |
-| `1` | `{exit, error}` | bad request (invalid JSON, missing `source`, a `prev_state` that is not an mmx state); `error` is a string. |
+| `1` | `{exit, error}` | module-level error (for example, a `prev_state` that is not an mmx state); `error` is a string. Invalid JavaScript input without a string `source` makes `turn()` throw `TypeError`. |
 
 `diff` and `state` follow
 [`skills/mmx/references/diff-schema.md`](../skills/mmx/references/diff-schema.md).

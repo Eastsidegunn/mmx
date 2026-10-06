@@ -140,6 +140,15 @@ fn doctor_missing_and_stale_skills() {
 }
 
 #[test]
+fn doctor_requires_codex_skill_when_project_hooks_use_mmx() {
+    let (home, project, bin) = setup();
+    std::fs::remove_dir_all(home.join(".codex")).unwrap();
+    let o = run(&home, &project, &bin, &["doctor"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(output(&o).contains("FAIL Codex skill is missing\n  fix: mmx init --codex"));
+}
+
+#[test]
 fn doctor_warns_about_unused_missing_codex_skill() {
     let (home, project, bin) = fixture();
     let init = run(&home, &project, &bin, &["init"]);

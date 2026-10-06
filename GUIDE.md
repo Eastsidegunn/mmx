@@ -178,6 +178,30 @@ The full field reference is
 | `mmx init [--codex] [--hooks <f.mmd>]` | Install the agent skill (Claude Code; `--codex` adds Codex); `--hooks` adds project hooks in the current directory. |
 | `mmx doctor [<f.mmd>]` | Diagnose the installation, project hooks and, optionally, a diagram (validated without writing project files). |
 
+### `serve` HTTP API
+
+`mmx serve` binds to loopback by default. Every request must include a `Host`
+header naming that loopback address and port (`127.0.0.1`, `localhost`, or
+`[::1]`); an invalid `Host` or `Origin` is `403`. The fixed routes are:
+
+| Request | Response |
+| --- | --- |
+| `GET /` (also `?lang=`) | Cockpit page (`text/html`) |
+| `GET /editor.js` | Editor script |
+| `GET /state` | `{source, svg, nodes, edges, seq, epoch, by, note}` |
+| `POST /turn` with `Content-Type: application/json`, body `{source, note?, base_seq?}` | `200` with `{exit, noop?, state, diff, svg}`; parse errors are an exit-2 turn and still return `200` |
+| `GET /history` | `{entries:[{at,by,note,summary}]}` |
+| `GET /events` | SSE; each turn emits `{"seq", "epoch"}` |
+
+Stale `base_seq` values and unrendered external edits return `409`; a wrong
+content type returns `415`. Malformed requests, oversized headers, or oversized
+bodies return `400` (the current limits are 16 KiB and 2 MiB). A deployment
+proxy may translate an oversized request to `413`. For example:
+
+```sh
+curl -H 'Host: 127.0.0.1:8787' http://127.0.0.1:8787/state
+```
+
 Exit codes:
 
 | Code | Meaning |

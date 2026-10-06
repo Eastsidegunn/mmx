@@ -45,7 +45,7 @@ fn two_turn_conversation() {
     write(
         &dir,
         "d.mmd",
-        "flowchart TD\n    A[요청] --> B{검토}\n    B --> C[완료]\n",
+        "flowchart TD\n    A[Request] --> B{Review}\n    B --> C[Done]\n",
     );
     let out = mmx(&dir, &["render", "d.mmd", "--by", "agent"]);
     assert!(out.status.success(), "turn 1 failed: {out:?}");
@@ -63,7 +63,7 @@ fn two_turn_conversation() {
     write(
         &dir,
         "d.mmd",
-        "flowchart TD\n    A[사용자 요청] --> B{검토}\n    B --> C[완료]\n    B --> G[반려]\n",
+        "flowchart TD\n    A[User request] --> B{Review}\n    B --> C[Done]\n    B --> G[Reject]\n",
     );
     let out = mmx(
         &dir,
@@ -73,7 +73,7 @@ fn two_turn_conversation() {
             "--by",
             "human",
             "--note",
-            "반려 경로 추가",
+            "add rejection path",
         ],
     );
     assert!(out.status.success(), "turn 2 failed: {out:?}");
@@ -83,10 +83,10 @@ fn two_turn_conversation() {
     assert_eq!(diff["source_changed"], true);
     assert_eq!(diff["kind_changed"], Value::Null);
     assert_eq!(diff["by"], "human");
-    assert_eq!(diff["note"], "반려 경로 추가");
+    assert_eq!(diff["note"], "add rejection path");
     assert_eq!(
         diff["nodes"]["added"],
-        json!([{"id":"G","label":"반려","shape":"Rectangle"}])
+        json!([{"id":"G","label":"Reject","shape":"Rectangle"}])
     );
     assert_eq!(
         diff["edges"]["added"],
@@ -96,7 +96,7 @@ fn two_turn_conversation() {
     assert_eq!(changed.len(), 1);
     assert_eq!(changed[0]["id"], "A");
     assert_eq!(changed[0]["field"], "label");
-    assert_eq!(changed[0]["new"], "사용자 요청");
+    assert_eq!(changed[0]["new"], "User request");
     assert!(diff["stats"]["global_shift"].is_object());
     assert_eq!(diff["error"], Value::Null);
 
@@ -146,7 +146,7 @@ fn outputs_are_deterministic() {
         write(
             &dir,
             "d.mmd",
-            "flowchart TD\n    A --> B\n    B --> C\n    A --> D[새 노드]\n",
+            "flowchart TD\n    A --> B\n    B --> C\n    A --> D[New node]\n",
         );
         assert!(mmx(&dir, &["render", "d.mmd", "--by", "human"])
             .status
@@ -160,6 +160,7 @@ fn outputs_are_deterministic() {
 #[test]
 fn edge_changes_use_key_field() {
     let dir = tempdir();
+    // Non-ASCII edge labels are kept here to exercise UTF-8 diff handling.
     write(&dir, "d.mmd", "flowchart LR\n    A -->|예| B\n");
     assert!(mmx(&dir, &["render", "d.mmd"]).status.success());
     write(&dir, "d.mmd", "flowchart LR\n    A -->|아니오| B\n");
@@ -692,6 +693,7 @@ fn render_note_on_already_rendered_bytes_is_a_note_turn() {
 
 #[test]
 fn note_is_a_turn_and_includes_unrendered_edits() {
+    // Non-ASCII notes are kept here to exercise UTF-8 turn-log handling.
     let dir = tempdir();
     write(&dir, "d.mmd", W_A);
     ok(&dir, &["render", "d.mmd", "--by", "agent"]);
@@ -709,10 +711,10 @@ fn note_is_a_turn_and_includes_unrendered_edits() {
 
     // Unrendered edits ride along with the note.
     write(&dir, "d.mmd", W_B);
-    ok(&dir, &["note", "d.mmd", "C 추가", "--by", "bot"]);
+    ok(&dir, &["note", "d.mmd", "add C", "--by", "bot"]);
     let diff = read_json(&dir.join("d.diff.json"));
     assert_eq!(diff["by"], "bot");
-    assert_eq!(diff["note"], "C 추가");
+    assert_eq!(diff["note"], "add C");
     assert_eq!(diff["source_changed"], true);
     assert_eq!(
         diff["nodes"]["added"],
@@ -780,7 +782,7 @@ fn wait_returns_pending_human_turns_immediately() {
     assert_eq!(lines[1]["note"], "two");
 
     // Once the agent answers, nothing is pending: timeout -> exit 3.
-    ok(&dir, &["note", "d.mmd", "답변"]);
+    ok(&dir, &["note", "d.mmd", "reply"]);
     let start = std::time::Instant::now();
     let out = mmx(&dir, &["wait", "d.mmd", "--timeout", "1"]);
     assert_eq!(out.status.code(), Some(3), "{out:?}");
@@ -819,14 +821,14 @@ fn wait_without_serve_renders_direct_edit_as_human() {
 
     // A direct parse-error edit is rendered once, and not again after the
     // agent answers on the same broken bytes.
-    ok(&dir, &["note", "d.mmd", "받았어요"]);
+    ok(&dir, &["note", "d.mmd", "got it"]);
     write(&dir, "d.mmd", W_BAD);
     let out = mmx(&dir, &["wait", "d.mmd", "--timeout", "0"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let diff: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(diff["error"]["kind"], "parse");
     assert_eq!(
-        mmx(&dir, &["note", "d.mmd", "고쳐볼게요"]).status.code(),
+        mmx(&dir, &["note", "d.mmd", "I will fix it"]).status.code(),
         Some(2)
     );
     let before = log_entries(&dir).len();
