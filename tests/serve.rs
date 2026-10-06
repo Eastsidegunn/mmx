@@ -163,7 +163,18 @@ fn mmx002_t1_fixed_routes_and_traversal() {
     let s = start(A);
     let (status, page) = request(s.addr, "GET", "/", None);
     assert_eq!(status, 200);
-    assert!(String::from_utf8(page).unwrap().contains("<mmx-editor>"));
+    let page = String::from_utf8(page).unwrap();
+    assert!(page.contains("<mmx-editor>"));
+    assert!(page.contains("<title>mmx cockpit</title>"));
+    assert!(page.contains("const translations = {"));
+    assert!(page.contains("const requestedLang = new URLSearchParams(location.search).get('lang')"));
+    assert!(page.contains("you: 'You'"));
+    assert!(page.contains("you: '나'"));
+    // The language switch is a query string on the same route.
+    for query in ["/?lang=ko", "/?lang=en"] {
+        let (status, _) = request(s.addr, "GET", query, None);
+        assert_eq!(status, 200, "{query}");
+    }
     let (status, script) = request(s.addr, "GET", "/editor.js", None);
     assert_eq!(status, 200);
     assert!(String::from_utf8(script).unwrap().contains("MmxEditor"));

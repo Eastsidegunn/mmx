@@ -1,6 +1,7 @@
 //! mmx core: parse, diff, state, emit. No harness names in here.
 
 pub mod diff;
+pub mod doctor;
 pub mod emit;
 pub mod init;
 pub mod lint;

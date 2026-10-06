@@ -43,6 +43,17 @@
     apply: "✓",
     label: "label",
     pendingOps: function (n) { return n + " pending operation(s)"; },
+    // What a send would carry, by kind; shown in the status line so a missing
+    // edge (e.g. a drop that missed its target) is visible before sending.
+    pendingDetail: function (c) {
+      var parts = [];
+      if (c.nodesAdded) parts.push("+" + c.nodesAdded + " node" + (c.nodesAdded === 1 ? "" : "s"));
+      if (c.edgesAdded) parts.push("+" + c.edgesAdded + " connection" + (c.edgesAdded === 1 ? "" : "s"));
+      if (c.renamed) parts.push(c.renamed + " renamed");
+      if (c.relabeled) parts.push(c.relabeled + " label" + (c.relabeled === 1 ? "" : "s") + " changed");
+      if (c.deleted) parts.push(c.deleted + " deleted");
+      return "Pending: " + parts.join(" · ");
+    },
     idle: "Click a node or an arrow; drag the ● handle to connect; drag a node to rearrange (temporary)",
     manualMode: "Moved nodes are placed temporarily — send or a new turn snaps back to auto layout",
     connected: function (a, b) { return a + " → " + b + " connected"; },
@@ -620,8 +631,26 @@
     }
 
     function setStatus(m) { statusEl.textContent = m || ""; }
+    function opsDetail() {
+      var c = { nodesAdded: 0, edgesAdded: 0, renamed: 0, relabeled: 0, deleted: 0 };
+      if (!model) return c;
+      Object.keys(model.nodes).forEach(function (id) {
+        var d = model.nodes[id];
+        if (d.fresh) c.nodesAdded++;
+        else if (d.deleted) c.deleted++;
+        else if (d.modified) c.renamed++;
+      });
+      model.edges.forEach(function (e) {
+        if (e.pending && !e.deleted) c.edgesAdded++;
+        else if (!e.pending && e.deleted) c.deleted++;
+        else if (e.labelChanged) c.relabeled++;
+      });
+      return c;
+    }
     function idleStatus() {
-      setStatus(manual ? S.manualMode : (opsCount() > 0 ? S.pendingOps(opsCount()) : S.idle));
+      var n = opsCount();
+      var pending = n > 0 ? (S.pendingDetail ? S.pendingDetail(opsDetail(), n) : S.pendingOps(n)) : null;
+      setStatus(manual ? (pending ? S.manualMode + " — " + pending : S.manualMode) : (pending || S.idle));
       updateSendState();
     }
 
@@ -1261,7 +1290,14 @@
         document.removeEventListener("pointermove", onMove);
         document.removeEventListener("pointerup", onUp);
         band.remove();
-        var target = nodeAtPoint(localPoint(uv));
+        // Hit-test what is actually under the pointer first, so a freshly
+        // added node (still in the staging row, without a layout box) can be
+        // a connection target too.
+        var target = null;
+        var under = shadow.elementFromPoint ? shadow.elementFromPoint(uv.clientX, uv.clientY) : null;
+        var hitEl = under && under.closest ? under.closest(".hit[data-id],.snode[data-id]") : null;
+        if (hitEl && alive(hitEl.dataset.id)) target = hitEl.dataset.id;
+        if (!target) target = nodeAtPoint(localPoint(uv));
         if (target && target !== fromId) {
           var e = { from: fromId, to: target, label: null, pending: true };
           model.edges.push(e);

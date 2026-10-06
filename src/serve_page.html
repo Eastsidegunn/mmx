@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>mmx 조종석</title>
+  <title>mmx cockpit</title>
   <style>
     body { font: 15px/1.5 system-ui,sans-serif; color:#23272e; max-width:1440px; margin:24px auto; padding:0 16px; }
     .layout { display:grid; grid-template-columns:minmax(0,1fr); gap:20px; }
@@ -29,14 +29,14 @@
   </style>
 </head>
 <body>
-  <header><h1>mmx 조종석</h1><span id="turn">불러오는 중…</span></header>
+  <header><h1>mmx cockpit</h1><span id="turn">Loading…</span></header>
   <div id="status" role="status" aria-live="polite"></div>
-  <button id="load-current" hidden>현 상태 불러오기</button>
+  <button id="load-current" hidden>Load current state</button>
   <div class="layout">
     <mmx-editor></mmx-editor>
     <aside>
-      <div id="history-title">턴 기록</div>
-      <ul id="history"><li id="history-empty">아직 없음 — 보내거나 받은 턴이 여기 쌓입니다</li></ul>
+      <div id="history-title">Turn history</div>
+      <ul id="history"><li id="history-empty">No turns yet — sent and received turns appear here</li></ul>
     </aside>
   </div>
   <script src="/editor.js"></script>
@@ -45,17 +45,181 @@
     const status = document.querySelector('#status');
     const turn = document.querySelector('#turn');
     const loadCurrent = document.querySelector('#load-current');
-    ed.strings = {
-      addNode: '+ 노드', send: '턴 보내기', sendWithCount: n => `턴 보내기 (${n}개 변경)`,
-      revert: '되돌리기', autoLayout: '자동 배치', fitView: '화면 맞춤',
-      notePlaceholder: '메모나 질문 — 그림을 안 바꿔도 턴으로 보내집니다',
-      menuEdit: '✎ 편집', menuDelete: '✕ 삭제',
-      menuLabel: '라벨', apply: '확인', label: '라벨',
-      pendingOps: n => `${n}개 변경 대기 중`, idle: '노드를 더블클릭해 이름을 바꾸고, ● 핸들을 끌어 연결하세요',
-      manualMode: '옮긴 노드만 임시 위치 — 보내거나 새 턴을 받으면 자동 배치됩니다',
-      connected: (a,b) => `${a} → ${b} 연결됨`, deleted: id => `${id} 삭제됨 — 다시 누르면 취소`,
-      nothingToSend: '보낼 변경도 메모도 없습니다', staged: '(배치 전)', newNodeLabel: '새 노드'
+    // Pending-change breakdown shown before sending (nodes, connections, ...).
+    const pendingDetail = (prefix, parts) => c => prefix + [
+      c.nodesAdded && parts.nodes(c.nodesAdded), c.edgesAdded && parts.edges(c.edgesAdded),
+      c.renamed && parts.renamed(c.renamed), c.relabeled && parts.relabeled(c.relabeled),
+      c.deleted && parts.deleted(c.deleted),
+    ].filter(Boolean).join(' · ');
+    const translations = {
+      en: {
+        title: 'mmx cockpit', loading: 'Loading…', loadCurrent: 'Load current state',
+        historyTitle: 'Turn history', historyEmpty: 'No turns yet — sent and received turns appear here',
+        you: 'You', start: 'Start', noNote: '(no note)', dateLocale: 'en-US',
+        summaryError: error => `Error: ${error}`, node: 'Node', edge: 'Edge', noDiagramChange: 'No diagram changes', firstPicture: 'First version of the diagram',
+        historyFailed: status => `Failed to load history (${status})`,
+        stateFailed: status => `Failed to load state (${status})`,
+        noTurns: 'No turns yet — edit the draft to send the first turn',
+        lastTurn: (by, note) => `Last turn: ${by}${note ? ' · ' + note : ''}`,
+        newTurn: 'New turn arrived — the view will update after you send or revert your edits',
+        conflict: 'Conflict: the agent changed the diagram first — load the current state',
+        sendFailed: status => `Failed to send turn (${status})`,
+        position: (line, column) => line ? ` (line ${line}${column ? `, column ${column}` : ''})` : '',
+        invalidSource: (kind, place, message) => `${kind} error${place}: ${message}`,
+        noChange: 'No changes',
+        lossy: 'Warning: this edit touched syntax that cannot be patched directly (such as an & group), so the diagram text was rewritten — some formatting, such as dashed arrows or comments, may have been lost',
+        reconnecting: 'Reconnecting…',
+        editor: {
+          addNode: '+ Node', send: 'Send turn', sendWithCount: n => `Send turn (${n} ${n === 1 ? 'change' : 'changes'})`,
+          revert: 'Revert', autoLayout: 'Auto layout', fitView: 'Fit view',
+          notePlaceholder: 'Note or question — send a turn even without changing the diagram',
+          menuEdit: '✎ Edit', menuDelete: '✕ Delete',
+          menuLabel: 'Label', apply: 'Apply', label: 'Label',
+          pendingDetail: pendingDetail('Pending: ', { nodes: n => `+${n} node${n === 1 ? '' : 's'}`, edges: n => `+${n} connection${n === 1 ? '' : 's'}`, renamed: n => `${n} renamed`, relabeled: n => `${n} label${n === 1 ? '' : 's'} changed`, deleted: n => `${n} deleted` }),
+          pendingOps: n => `${n} pending ${n === 1 ? 'change' : 'changes'}`, idle: 'Double-click a node to rename it; drag the ● handle to connect nodes',
+          manualMode: 'Moved nodes have temporary positions — sending or receiving a turn restores auto layout',
+          connected: (a,b) => `${a} → ${b} connected`, deleted: id => `${id} deleted — click again to undo`,
+          nothingToSend: 'No changes or note to send', staged: '(not placed)', newNodeLabel: 'New node'
+        }
+      },
+      ko: {
+        title: 'mmx 콕핏', loading: '불러오는 중…', loadCurrent: '최신 상태 불러오기',
+        historyTitle: '턴 기록', historyEmpty: '아직 턴이 없습니다 — 주고받은 턴이 여기에 표시됩니다',
+        you: '나', start: '시작', noNote: '(메모 없음)', dateLocale: 'ko-KR',
+        summaryError: error => `오류: ${error}`, node: '노드', edge: '연결', noDiagramChange: '그림 변경 없음', firstPicture: '첫 그림',
+        historyFailed: status => `기록 불러오기 실패 (${status})`,
+        stateFailed: status => `상태 불러오기 실패 (${status})`,
+        noTurns: '아직 턴 없음 — 초안을 편집해 첫 턴을 보내세요',
+        lastTurn: (by, note) => `마지막 턴: ${by}${note ? ' · ' + note : ''}`,
+        newTurn: '새 턴 도착 — 편집 중인 내용을 보내거나 되돌리면 화면이 갱신됩니다',
+        conflict: '충돌: 에이전트가 먼저 다이어그램을 바꿨습니다 — 최신 상태를 불러오세요',
+        sendFailed: status => `전송 실패 (${status})`,
+        position: (line, column) => line ? ` (${line}행${column ? ` ${column}열` : ''})` : '',
+        invalidSource: (kind, place, message) => `${kind} 오류${place}: ${message}`,
+        noChange: '변경 없음',
+        lossy: '주의: 이 편집은 직접 고칠 수 없는 구문(& 그룹 등)을 건드려 다이어그램 텍스트를 다시 썼습니다 — 점선 화살표나 주석 같은 서식 일부가 사라졌을 수 있습니다',
+        reconnecting: '연결 재시도 중…',
+        editor: {
+          addNode: '+ 노드', send: '턴 보내기', sendWithCount: n => `턴 보내기 (변경 ${n}건)`,
+          revert: '되돌리기', autoLayout: '자동 배치', fitView: '화면 맞춤',
+          notePlaceholder: '메모나 질문 — 다이어그램을 바꾸지 않아도 턴으로 보낼 수 있습니다',
+          menuEdit: '✎ 편집', menuDelete: '✕ 삭제',
+          menuLabel: '라벨', apply: '적용', label: '라벨',
+          pendingDetail: pendingDetail('보낼 변경: ', { nodes: n => `노드 +${n}`, edges: n => `연결 +${n}`, renamed: n => `이름 변경 ${n}`, relabeled: n => `라벨 변경 ${n}`, deleted: n => `삭제 ${n}` }),
+          pendingOps: n => `변경 ${n}건 대기 중`, idle: '노드를 더블클릭해 이름을 바꾸고, ● 핸들을 끌어 연결하세요',
+          manualMode: '옮긴 노드의 위치는 임시입니다 — 턴을 보내거나 받으면 자동 배치로 돌아갑니다',
+          connected: (a,b) => `${a} → ${b} 연결됨`, deleted: id => `${id} 삭제됨 — 다시 누르면 취소`,
+          nothingToSend: '보낼 변경도 메모도 없습니다', staged: '(배치 전)', newNodeLabel: '새 노드'
+        }
+      },
+      'zh-CN': {
+        title: 'mmx 编辑台', loading: '加载中…', loadCurrent: '加载最新状态',
+        historyTitle: '交互记录', historyEmpty: '暂无记录，发送和收到的交互会显示在这里',
+        you: '我', start: '开始', noNote: '（无备注）', dateLocale: 'zh-CN',
+        summaryError: error => `错误：${error}`, node: '节点', edge: '连线', noDiagramChange: '图表未更改', firstPicture: '初始图表',
+        historyFailed: status => `加载交互记录失败（${status}）`,
+        stateFailed: status => `加载状态失败（${status}）`,
+        noTurns: '暂无交互，编辑草稿后即可发送第一轮',
+        lastTurn: (by, note) => `上次交互：${by}${note ? ' · ' + note : ''}`,
+        newTurn: '收到新一轮交互，发送或撤销当前修改后视图将更新',
+        conflict: '冲突：智能体已先修改了图表，请加载最新状态',
+        sendFailed: status => `发送失败（${status}）`,
+        position: (line, column) => line ? `（第 ${line} 行${column ? `，第 ${column} 列` : ''}）` : '',
+        invalidSource: (kind, place, message) => `${kind} 错误${place}：${message}`,
+        noChange: '没有更改',
+        lossy: '警告：这次编辑涉及无法直接修改的语法（如 & 分组），因此重写了图表文本；虚线箭头或注释等格式可能丢失',
+        reconnecting: '正在重新连接…',
+        editor: {
+          addNode: '+ 节点', send: '发送', sendWithCount: n => `发送（${n} 处更改）`,
+          revert: '撤销修改', autoLayout: '自动布局', fitView: '适应画布',
+          notePlaceholder: '备注或提问（不改图也可以发送）',
+          menuEdit: '✎ 编辑', menuDelete: '✕ 删除',
+          menuLabel: '标签', apply: '应用', label: '标签',
+          pendingDetail: pendingDetail('待发送：', { nodes: n => `节点 +${n}`, edges: n => `连线 +${n}`, renamed: n => `重命名 ${n}`, relabeled: n => `标签修改 ${n}`, deleted: n => `删除 ${n}` }),
+          pendingOps: n => `${n} 处更改待发送`, idle: '双击节点可重命名；拖动 ● 手柄可连接节点',
+          manualMode: '已移动节点的位置是临时的，发送或收到新一轮交互后将恢复自动布局',
+          connected: (a,b) => `已连接 ${a} → ${b}`, deleted: id => `已删除 ${id}，再次点击可撤销`,
+          nothingToSend: '没有可发送的更改或备注', staged: '（尚未放置）', newNodeLabel: '新节点'
+        }
+      },
+      ja: {
+        title: 'mmx コックピット', loading: '読み込み中…', loadCurrent: '最新の状態を読み込む',
+        historyTitle: 'ターン履歴', historyEmpty: 'まだターンはありません。送受信したターンがここに表示されます',
+        you: 'あなた', start: '開始', noNote: '（メモなし）', dateLocale: 'ja-JP',
+        summaryError: error => `エラー：${error}`, node: 'ノード', edge: '接続', noDiagramChange: 'ダイアグラムの変更なし', firstPicture: '最初のダイアグラム',
+        historyFailed: status => `履歴を読み込めませんでした（${status}）`,
+        stateFailed: status => `状態を読み込めませんでした（${status}）`,
+        noTurns: 'まだターンはありません。下書きを編集して最初のターンを送信してください',
+        lastTurn: (by, note) => `前回のターン: ${by}${note ? ' · ' + note : ''}`,
+        newTurn: '新しいターンが届きました。編集内容を送信するか元に戻すと、表示が更新されます',
+        conflict: '競合：エージェントが先にダイアグラムを変更しました。最新の状態を読み込んでください',
+        sendFailed: status => `送信できませんでした（${status}）`,
+        position: (line, column) => line ? `（${line}行目${column ? `、${column}列目` : ''}）` : '',
+        invalidSource: (kind, place, message) => `${kind} エラー${place}：${message}`,
+        noChange: '変更なし',
+        lossy: '警告：この編集は直接書き換えられない構文（& グループなど）を含むため、ダイアグラムのテキストを書き直しました。破線の矢印やコメントなど、一部の書式が失われた可能性があります',
+        reconnecting: '再接続中…',
+        editor: {
+          addNode: '+ ノード', send: 'ターンを送信', sendWithCount: n => `ターンを送信（変更 ${n} 件）`,
+          revert: '元に戻す', autoLayout: '自動レイアウト', fitView: '全体を表示',
+          notePlaceholder: 'メモや質問（ダイアグラムを変更しなくても送信できます）',
+          menuEdit: '✎ 編集', menuDelete: '✕ 削除',
+          menuLabel: 'ラベル', apply: '適用', label: 'ラベル',
+          pendingDetail: pendingDetail('未送信：', { nodes: n => `ノード +${n}`, edges: n => `接続 +${n}`, renamed: n => `名前変更 ${n}`, relabeled: n => `ラベル変更 ${n}`, deleted: n => `削除 ${n}` }),
+          pendingOps: n => `未送信の変更 ${n} 件`, idle: 'ノードをダブルクリックで名前を変更、● ハンドルをドラッグで接続',
+          manualMode: '移動したノードの位置は一時的です。ターンを送受信すると自動配置に戻ります',
+          connected: (a,b) => `${a} → ${b} を接続しました`, deleted: id => `${id} を削除しました。もう一度クリックすると元に戻せます`,
+          nothingToSend: '送信する変更やメモがありません', staged: '（未配置）', newNodeLabel: '新しいノード'
+        }
+      },
+      es: {
+        title: 'Panel de mmx', loading: 'Cargando…', loadCurrent: 'Cargar el estado actual',
+        historyTitle: 'Historial de turnos', historyEmpty: 'Aún no hay turnos — los enviados y recibidos aparecerán aquí',
+        you: 'Tú', start: 'Origen', dateLocale: navigator.language.startsWith('es') ? navigator.language : 'es-ES', noNote: '(sin nota)',
+        summaryError: error => `Error: ${error}`, node: 'Nodo', edge: 'Conexión', noDiagramChange: 'Sin cambios en el diagrama', firstPicture: 'Primera versión del diagrama',
+        historyFailed: status => `No se pudo cargar el historial (${status})`,
+        stateFailed: status => `No se pudo cargar el estado (${status})`,
+        noTurns: 'Aún no hay turnos — edita el borrador para enviar el primero',
+        lastTurn: (by, note) => `Último turno: ${by}${note ? ' · ' + note : ''}`,
+        newTurn: 'Nuevo turno recibido — la vista se actualizará cuando envíes o reviertas tus cambios',
+        conflict: 'Conflicto: el agente modificó el diagrama antes que tú — carga el estado actual',
+        sendFailed: status => `No se pudo enviar el turno (${status})`,
+        position: (line, column) => line ? ` (línea ${line}${column ? `, columna ${column}` : ''})` : '',
+        invalidSource: (kind, place, message) => `Error de ${({parse:'de sintaxis',encoding:'de codificación'})[kind] ?? `(${kind})`}${place}: ${message}`,
+        noChange: 'Sin cambios',
+        lossy: 'Advertencia: esta edición afectó a sintaxis que no se puede modificar directamente (como un grupo &), así que se reescribió el texto del diagrama. Puede que se hayan perdido algunos detalles de formato, como flechas discontinuas o comentarios',
+        reconnecting: 'Reconectando…',
+        editor: {
+          addNode: '+ Nodo', send: 'Enviar turno', sendWithCount: n => `Enviar turno (${n} ${n === 1 ? 'cambio' : 'cambios'})`,
+          revert: 'Revertir', autoLayout: 'Distribución automática', fitView: 'Ajustar vista',
+          notePlaceholder: 'Nota o pregunta — puedes enviar un turno sin cambiar el diagrama',
+          menuEdit: '✎ Editar', menuDelete: '✕ Eliminar',
+          menuLabel: 'Etiqueta', apply: 'Aplicar', label: 'Etiqueta',
+          pendingDetail: pendingDetail('Pendiente: ', { nodes: n => `+${n} ${n === 1 ? 'nodo' : 'nodos'}`, edges: n => `+${n} ${n === 1 ? 'conexión' : 'conexiones'}`, renamed: n => `${n} ${n === 1 ? 'renombrado' : 'renombrados'}`, relabeled: n => `${n} ${n === 1 ? 'etiqueta cambiada' : 'etiquetas cambiadas'}`, deleted: n => `${n} ${n === 1 ? 'eliminado' : 'eliminados'}` }),
+          pendingOps: n => `${n} ${n === 1 ? 'cambio pendiente' : 'cambios pendientes'}`, idle: 'Haz doble clic en un nodo para renombrarlo; arrastra el punto ● para conectar nodos',
+          manualMode: 'Los nodos movidos tienen posiciones temporales — al enviar o recibir un turno se restablece la distribución automática',
+          connected: (a,b) => `${a} → ${b} conectados`, deleted: id => `${id} eliminado — haz clic de nuevo para deshacer`,
+          nothingToSend: 'No hay cambios ni nota que enviar', staged: '(sin colocar)', newNodeLabel: 'Nodo nuevo'
+        }
+      }
     };
+    const requestedLang = new URLSearchParams(location.search).get('lang');
+    const browserLang = navigator.language.toLowerCase();
+    const lang = requestedLang === 'zh' ? 'zh-CN'
+      : Object.hasOwn(translations, requestedLang) ? requestedLang
+      : browserLang.startsWith('ko') ? 'ko'
+      : browserLang.startsWith('zh') ? 'zh-CN'
+      : browserLang.startsWith('ja') ? 'ja'
+      : browserLang.startsWith('es') ? 'es' : 'en';
+    const t = translations[lang];
+    document.documentElement.lang = lang;
+    document.title = t.title;
+    document.querySelector('h1').textContent = t.title;
+    turn.textContent = t.loading;
+    loadCurrent.textContent = t.loadCurrent;
+    document.querySelector('#history-title').textContent = t.historyTitle;
+    document.querySelector('#history-empty').textContent = t.historyEmpty;
+    ed.strings = t.editor;
     let seq = -1;
     let epoch = null;
     let waitingSeq = -1;
@@ -63,7 +227,9 @@
     const history = document.querySelector('#history');
     function changeSummary(m) {
       // One line from the server's generic counts.
-      if (m.error) return `오류: ${m.error}`;
+      if (m.error) return t.summaryError(m.error);
+      // The first render is the starting picture, not "no change".
+      if (m.baseline) return t.firstPicture;
       const part = (name, a, r, c) => {
         const bits = [];
         if (a) bits.push(`+${a}`);
@@ -72,10 +238,10 @@
         return bits.length ? `${name} ${bits.join(' ')}` : '';
       };
       const text = [
-        part('노드', m.nodes_added, m.nodes_removed, m.nodes_changed),
-        part('연결', m.edges_added, m.edges_removed, m.edges_changed),
+        part(t.node, m.nodes_added, m.nodes_removed, m.nodes_changed),
+        part(t.edge, m.edges_added, m.edges_removed, m.edges_changed),
       ].filter(Boolean).join(' · ');
-      return text || '그림 변경 없음';
+      return text || t.noDiagramChange;
     }
     function renderHistory(entries) {
       // The whole conversation from the turn log, latest first.
@@ -83,7 +249,7 @@
       if (!entries.length) {
         const li = document.createElement('li');
         li.id = 'history-empty';
-        li.textContent = '아직 없음 — 보내거나 받은 턴이 여기 쌓입니다';
+        li.textContent = t.historyEmpty;
         history.append(li);
         return;
       }
@@ -92,14 +258,14 @@
         const who = document.createElement('span');
         who.className = 'who';
         // 'serve'/'unknown' is the baseline render, not a speaker.
-        who.textContent = e.by === 'human' ? '나'
-          : (!e.by || e.by === 'serve' || e.by === 'unknown') ? '시작' : e.by;
+        who.textContent = e.by === 'human' ? t.you
+          : (!e.by || e.by === 'serve' || e.by === 'unknown') ? t.start : e.by;
         const when = document.createElement('span');
         when.className = 'when';
-        when.textContent = e.at ? new Date(e.at).toLocaleString('ko-KR') : '';
+        when.textContent = e.at ? new Date(e.at).toLocaleString(t.dateLocale) : '';
         const note = document.createElement('div');
         note.className = e.note ? 'note' : 'note none';
-        note.textContent = e.note || '(메모 없음)';
+        note.textContent = e.note || t.noNote;
         const summary = document.createElement('div');
         summary.className = e.summary && e.summary.error ? 'summary error' : 'summary';
         summary.textContent = changeSummary(e.summary || {});
@@ -109,7 +275,7 @@
     }
     async function loadHistory() {
       const response = await fetch('/history', {cache:'no-store'});
-      if (!response.ok) throw new Error(`기록 조회 실패 (${response.status})`);
+      if (!response.ok) throw new Error(t.historyFailed(response.status));
       renderHistory((await response.json()).entries || []);
     }
     function showState(s) {
@@ -118,21 +284,21 @@
       epoch = s.epoch;
       // 'serve'/'unknown' means the baseline render, not a conversation turn.
       turn.textContent = (!s.by || s.by === 'unknown' || s.by === 'serve')
-        ? '아직 턴 없음 — 초안을 편집해 첫 턴을 보내세요'
-        : `마지막 턴: ${s.by}${s.note ? ' · ' + s.note : ''}`;
+        ? t.noTurns
+        : t.lastTurn(s.by === 'human' ? t.you : s.by, s.note);
       status.textContent = '';
       loadCurrent.hidden = true;
     }
     async function refresh() {
       const response = await fetch('/state', {cache:'no-store'});
-      if (!response.ok) throw new Error(`상태 조회 실패 (${response.status})`);
+      if (!response.ok) throw new Error(t.stateFailed(response.status));
       const state = await response.json();
       if (epoch !== null && state.epoch !== epoch) {
         showState(state);
         waitingSeq = -1;
       } else if (ed.pendingOps() > 0 || sending) {
         waitingSeq = Math.max(waitingSeq, state.seq);
-        status.textContent = '새 턴 도착 — 보내기/되돌리기 후 갱신됩니다';
+        status.textContent = t.newTurn;
       } else if (state.seq >= seq) {
         showState(state);
         waitingSeq = -1;
@@ -146,25 +312,25 @@
           body:JSON.stringify({source:event.detail.source, note:event.detail.note, base_seq:seq})
         });
         if (response.status === 409) {
-          const conflict = await response.json();
-          status.textContent = '충돌: 에이전트가 먼저 바꿈 — 현 상태 불러오기';
+          await response.json();
+          status.textContent = t.conflict;
           loadCurrent.hidden = false;
           return;
         }
-        if (!response.ok) throw new Error(`전송 실패 (${response.status})`);
+        if (!response.ok) throw new Error(t.sendFailed(response.status));
         const result = await response.json();
         if (result.exit === 2) {
           const e = result.diff.error;
-          const place = e.line ? ` (${e.line}행${e.column ? ` ${e.column}열` : ''})` : '';
-          status.textContent = `${e.kind} 오류${place}: ${e.message}`;
+          const place = t.position(e.line, e.column);
+          status.textContent = t.invalidSource(e.kind, place, e.message);
         } else if (result.noop) {
           await refreshStateAfterNoop();
-          status.textContent = '변경 없음';
+          status.textContent = t.noChange;
         } else {
           showState({...result.state, svg:result.svg});
           ed.setNote('');
           if (event.detail.lossy) {
-            status.textContent = '주의: 이 편집은 원문 그대로 고칠 수 없는 구문(& 묶음 등)에 걸려 그림 텍스트를 다시 썼습니다 — 점선·주석 등 일부 서식이 사라졌을 수 있습니다';
+            status.textContent = t.lossy;
           }
         }
       } catch (error) { status.textContent = error.message; }
@@ -175,7 +341,7 @@
     });
     async function refreshStateAfterNoop() {
       const response = await fetch('/state', {cache:'no-store'});
-      if (!response.ok) throw new Error(`상태 조회 실패 (${response.status})`);
+      if (!response.ok) throw new Error(t.stateFailed(response.status));
       showState(await response.json());
     }
     loadCurrent.addEventListener('click', () => refreshStateAfterNoop().catch(error => status.textContent = error.message));
@@ -192,7 +358,7 @@
         refresh().catch(error => status.textContent = error.message);
       }
     };
-    events.onerror = () => { if (!status.textContent) status.textContent = '연결 재시도 중…'; };
+    events.onerror = () => { if (!status.textContent) status.textContent = t.reconnecting; };
   </script>
 </body>
 </html>

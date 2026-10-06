@@ -551,7 +551,7 @@ fn init_installs_skill_and_hooks() {
         .output()
         .unwrap();
     assert!(out.status.success(), "init --hooks failed: {out:?}");
-    assert!(project.join("adapters/mmx_hook.py").exists());
+    assert!(project.join(".mmx/mmx_hook.py").exists());
     let settings = std::fs::read_to_string(project.join(".claude/settings.json")).unwrap();
     assert!(settings.contains("docs/arch.mmd"));
     assert!(!settings.contains("--diagram diagram.mmd"));
@@ -620,6 +620,61 @@ fn mmx008_w_log_appends_on_ok_and_parse_error_not_noop() {
     assert_eq!(entries[1]["diff"]["error"]["kind"], "parse");
     assert_eq!(entries[2]["note"], "fix");
     assert_eq!(entries[2]["diff"], read_json(&dir.join("d.diff.json")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn mmx009_render_note_on_already_rendered_bytes_is_a_note_turn() {
+    // serve (or a hook) renders the agent's edit first; the agent's own
+    // `render --note` must still deliver the note instead of being a no-op.
+    let dir = tempdir();
+    write(&dir, "d.mmd", W_A);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    write(&dir, "d.mmd", W_B);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    ok(
+        &dir,
+        &[
+            "render",
+            "d.mmd",
+            "--by",
+            "agent",
+            "--note",
+            "why I changed it",
+        ],
+    );
+    let log: Vec<Value> = std::fs::read_to_string(dir.join("d.turns.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(log.len(), 3, "{log:?}");
+    assert_eq!(log[2]["note"], "why I changed it");
+    assert_eq!(log[2]["diff"]["source_changed"], false);
+    // The very same note again on unchanged bytes is not a new turn.
+    ok(
+        &dir,
+        &[
+            "render",
+            "d.mmd",
+            "--by",
+            "agent",
+            "--note",
+            "why I changed it",
+        ],
+    );
+    let n = std::fs::read_to_string(dir.join("d.turns.jsonl"))
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(n, 3);
+    // No note on unchanged bytes stays a no-op.
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    let n = std::fs::read_to_string(dir.join("d.turns.jsonl"))
+        .unwrap()
+        .lines()
+        .count();
+    assert_eq!(n, 3);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -1,13 +1,20 @@
 [package]
 name = "mmx"
-version = "0.3.0"
+version = "0.4.0-dev"
 edition = "2021"
-description = "Conversational diagram protocol: humans and agents talk through mermaid diffs"
+description = "Edit an AI agent's Mermaid diagram on the picture; the agent sees exactly what you changed"
 license = "MIT"
 repository = "https://github.com/Eastsidegunn/mmx"
 readme = "README.md"
 keywords = ["mermaid", "diagram", "agent", "diff", "cli"]
 categories = ["command-line-utilities", "visualization"]
+include = [
+    "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/INSTALL.md", "/CHANGELOG.md",
+    "/src/**", "/editor/mmx-editor.js", "/skills/mmx/**",
+    "/adapters/mmx_hook.py", "/adapters/claude/settings.json",
+    "/adapters/codex/hooks.json",
+    "/examples/diagram.mmd", "/examples/onboarding.mmd",
+]
 
 [dependencies]
 mermaid-rs-renderer = "=0.3.1"

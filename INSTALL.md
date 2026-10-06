@@ -86,7 +86,8 @@ command -v mmx || ln -sf ~/.cargo/bin/mmx ~/.local/bin/mmx      # if ~/.local/bi
 
 Hooks and skills invoke `mmx` by bare name, so a session-only `export` is not
 enough if a hook runs in a fresh shell; prefer the symlink or add the export to
-the shell profile the harness actually uses.
+the shell profile the harness actually uses. Verify with
+`sh -lc 'command -v mmx'`.
 
 ## Step 4: verify
 
@@ -108,11 +109,16 @@ instead of proceeding.
 ```bash
 mmx init                        # agent skill, machine-wide
 mmx init --hooks diagram.mmd    # + automatic-render hooks for this project
+mmx init --codex --hooks diagram.mmd # + Codex skill and project hooks
 ```
 
 This is what makes agent sessions pick mmx up on their own; without it the
 binary works but nothing triggers automatically. Hooks load when a session
-starts, so restart the project's session after installing them.
+starts, so restart the project's session after installing them. Hooks require
+`python3` on PATH. In Codex, run `/hooks` and trust the project hooks.
+
+Verify the setup with `mmx doctor diagram.mmd` (or `mmx doctor` without a
+diagram). It prints an exact fix command for each failed check.
 
 ## Step 6: use it
 
@@ -121,7 +127,8 @@ starts, so restart the project's session after installing them.
 - Hook configurations for Claude Code and Codex CLI: `adapters/`
 - No hooks in your harness? Follow `adapters/AGENTS.md`.
 
-The one-line summary of usage: render with `--by human --print-if-changed` at
-the start of every turn, edit the diagram, render with `--by agent --note
-"what and why"` after every edit, and treat exit 2 as an instruction to fix
-the diagram and render again.
+The one-line summary of usage: `mmx wait <diagram.mmd>` for the human's turn,
+edit the diagram, `mmx render <diagram.mmd> --by agent --note "what and why"`
+(or `mmx note` to reply without editing), and treat exit 2 as an instruction
+to fix the diagram and render again. [AGENTS.md](AGENTS.md) has the full
+step-by-step routine.

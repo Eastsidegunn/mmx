@@ -7,3 +7,4 @@ examples/*.state.json
 .claude/
 examples/*.turns.jsonl
 *.serve.json
+examples/demo/node_modules

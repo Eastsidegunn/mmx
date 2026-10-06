@@ -35,13 +35,16 @@ struct Shared {
 
 /// Position in `<stem>.turns.jsonl` up to which entries were accounted for.
 /// `tail` (the last accounted raw line) survives rotation, where the file
-/// shrinks or is replaced; `tail_at` is a fallback if `tail` was rotated out.
+/// shrinks or is replaced; `tail_at` is a fallback if `tail` was rotated out,
+/// with `at_tail` (the accounted lines sharing that millisecond) so turns
+/// logged in the same millisecond are neither lost nor counted twice.
 struct LogCursor {
     path: PathBuf,
     len: u64,
     mtime: Option<SystemTime>,
     tail: Option<String>,
     tail_at: u64,
+    at_tail: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +102,7 @@ pub fn run(input: PathBuf, addr: &str, allow_external: bool) -> Result<()> {
         mtime: None,
         tail: None,
         tail_at: 0,
+        at_tail: Vec::new(),
     };
     // Everything already in the log (including the startup render) is past:
     // the page reads it through /history, it is not a new turn.
@@ -168,14 +172,27 @@ impl LogCursor {
                 // The accounted tail was rotated away: fall back to time.
                 None => raw
                     .iter()
-                    .position(|(_, v)| v["at"].as_u64().unwrap_or(0) > self.tail_at)
+                    .position(|(line, v)| {
+                        let at = v["at"].as_u64().unwrap_or(0);
+                        at > self.tail_at || (at == self.tail_at && !self.at_tail.contains(line))
+                    })
                     .unwrap_or(raw.len()),
             },
         };
         let fresh = raw.split_off(start);
         if let Some((line, entry)) = fresh.last() {
+            let at = entry["at"].as_u64().unwrap_or(0);
+            if at != self.tail_at {
+                self.at_tail.clear();
+            }
             self.tail = Some(line.clone());
-            self.tail_at = entry["at"].as_u64().unwrap_or(0);
+            self.tail_at = at;
+            self.at_tail.extend(
+                fresh
+                    .iter()
+                    .filter(|(_, v)| v["at"].as_u64().unwrap_or(0) == at)
+                    .map(|(l, _)| l.clone()),
+            );
         }
         fresh
     }
@@ -350,7 +367,10 @@ fn handle(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) -> Result<()> {
         )?;
         return Ok(());
     }
-    match (request.method.as_str(), request.path.as_str()) {
+    // Routes are fixed paths; a query string (the page's `?lang=`) is not
+    // part of the route.
+    let route = request.path.split('?').next().unwrap_or("");
+    match (request.method.as_str(), route) {
         ("GET", "/") => send(
             &mut stream,
             200,
@@ -670,5 +690,44 @@ fn write_sse(stream: &mut TcpStream, bytes: &[u8]) -> Result<bool> {
             Ok(false)
         }
         Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+
+    #[test]
+    fn mmx009_cursor_fallback_keeps_same_millisecond_turns() {
+        let dir = std::env::temp_dir().join(format!("mmx-cursor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("d.turns.jsonl");
+        let line = |by: &str, note: &str| {
+            format!(r#"{{"v":1,"at":1000,"by":"{by}","note":"{note}","diff":{{}}}}"#)
+        };
+        std::fs::write(
+            &path,
+            format!("{}\n{}\n", line("agent", "a"), line("human", "b")),
+        )
+        .unwrap();
+        let mut cursor = LogCursor {
+            path: path.clone(),
+            len: 0,
+            mtime: None,
+            tail: None,
+            tail_at: 0,
+            at_tail: Vec::new(),
+        };
+        assert_eq!(cursor.take_new().len(), 2);
+        // A rotation drops the accounted tail; a new turn lands in the same ms.
+        std::fs::write(
+            &path,
+            format!("{}\n{}\n", line("agent", "a"), line("human", "c")),
+        )
+        .unwrap();
+        let fresh = cursor.take_new();
+        let notes: Vec<_> = fresh.iter().map(|(_, v)| v["note"].clone()).collect();
+        assert_eq!(notes, vec![serde_json::json!("c")]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

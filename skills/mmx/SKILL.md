@@ -11,9 +11,17 @@ it tells you how to probe your environment and install user-locally.
 
 The human and agent edit the same `.mmd` file. `mmx render` writes `<stem>.svg`, `<stem>.diff.json`, and `<stem>.state.json`. The diff is the message for one turn; read it to learn what changed. Node IDs are stable names in the conversation.
 
+When setup seems broken, run `mmx doctor <diagram.mmd>`.
+
 ## Turn routine
 
-At the start of **every** turn, run this before editing the diagram:
+At the start of **every** turn, collect the human's changes before editing the diagram:
+
+```bash
+mmx wait diagram.mmd --timeout 0
+```
+
+It prints the human's unanswered turns as JSON lines (see "Waiting for the human" below). With `mmx serve` running, the human's edits arrive as turns on their own; without serve, `mmx wait` renders a direct edit of the file as the human's turn. The lower-level equivalent, when you only want to render the file as the human's turn, is:
 
 ```bash
 mmx render diagram.mmd --by human --print-if-changed
@@ -27,7 +35,7 @@ Immediately after **every** `.mmd` edit, including shell or script edits that ho
 mmx render diagram.mmd --by agent --note "Briefly describe the edit and reason" --print-if-changed
 ```
 
-`--note` is recorded in diff.json and the turn log, and `mmx serve` shows it to the human. If a hook (or `mmx serve`) already rendered the same bytes, this command is a no-op: it writes nothing and records no `by`/`note`. To attach a message anyway, or to reply without editing, use:
+`--note` is recorded in diff.json and the turn log, and `mmx serve` shows it to the human. A non-empty `--note` always makes a turn: if a hook (or `mmx serve`) already rendered the same bytes, the note arrives as a note-only turn (empty change sections) rather than being dropped; repeating the same note on unchanged bytes is a no-op. Without `--note`, rendering unchanged bytes is a no-op that writes nothing. To reply without editing, use:
 
 ```bash
 mmx note diagram.mmd "What you want to tell the human"
@@ -44,7 +52,7 @@ mmx wait diagram.mmd --timeout 300
 ```
 
 - Exit 0: each printed line is one compact diff JSON of a human turn you have not answered yet (oldest first, same format as diff.json). Respond by editing the diagram and running `mmx render diagram.mmd --by agent --note "..."`, or reply without editing via `mmx note diagram.mmd "..."`. Then call `mmx wait` again.
-- Exit 3: nothing yet (timeout). Call it again, or stop. `--timeout 0` checks once.
+- Exit 3: nothing yet (timeout). Call it again, or stop. `--timeout 0` does not block for the human; it may take up to about half a second to settle and render a direct file edit that is still being written.
 
 "Unanswered" means: human turns logged after the last non-human turn. With `mmx serve` running, the human speaks through the browser, and direct file edits are attributed to the agent (serve's poller renders them as `by: agent`). Without serve, `mmx wait` itself renders direct file edits (once the file is stable for two polls) as `by: human` and returns them.
 

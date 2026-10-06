@@ -9,7 +9,8 @@ cargo-dist-version = "0.33.0"
 ci = "github"
 # The installers to generate for each app
 installers = ["shell", "npm"]
-# npm 'mmx' is taken by an unrelated package; publish under a scope
+# npm 'mmx' is taken by an unrelated package; publish under a scope.
+# Forks: change npm-scope to a scope you own (or drop "npm" from installers).
 npm-scope = "@eastsidegunn"
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]

@@ -20,13 +20,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Install the agent skill (and optionally Claude Code hooks) so a
-    /// fresh machine is fully set up after `cargo install mmx && mmx init`
+    /// Install Claude Code skill and optionally Codex skill and project hooks
     Init {
         /// Also install Claude Code hooks in the current directory,
         /// wired to this diagram path
         #[arg(long, value_name = "DIAGRAM.mmd")]
         hooks: Option<PathBuf>,
+        /// Also install the Codex skill and, with --hooks, Codex project hooks
+        #[arg(long)]
+        codex: bool,
+    },
+    /// Diagnose installation, project hooks, and an optional diagram
+    Doctor {
+        /// Diagram to validate without writing any project files
+        diagram: Option<PathBuf>,
     },
     /// Render a diagram and emit diff.json / state.json for the turn
     Render {
@@ -104,13 +111,20 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
-        Command::Init { hooks } => match mmx::init::run_init(hooks) {
+        Command::Init { hooks, codex } => match mmx::init::run_init(hooks, codex) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("mmx init: {e:#}");
                 ExitCode::from(1)
             }
         },
+        Command::Doctor { diagram } => {
+            if mmx::doctor::run(diagram.as_deref()) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }
         Command::Render {
             input,
             by,
@@ -128,6 +142,13 @@ fn main() -> ExitCode {
             }
 
             let out_state = state_out.unwrap_or_else(|| sibling(&input, "state.json"));
+            let log = sibling(&input, "turns.jsonl");
+            // A non-empty note is a message, so it always makes a turn: when a
+            // hook or `mmx serve` already rendered these bytes, the note
+            // arrives as a note-only turn instead of being dropped. Repeating
+            // the very same note on unchanged bytes stays a no-op.
+            let force_turn = note.as_deref().is_some_and(|n| !n.trim().is_empty())
+                && !mmx::turnlog::repeats_last(&log, &input, &by, note.as_deref());
             let job = RenderJob {
                 by,
                 note,
@@ -139,8 +160,8 @@ fn main() -> ExitCode {
                 out_diff: diff_out.unwrap_or_else(|| sibling(&input, "diff.json")),
                 out_state,
                 print_if_changed,
-                force_turn: false,
-                log: Some(sibling(&input, "turns.jsonl")),
+                force_turn,
+                log: Some(log),
                 input,
             };
             finish_render(&job)

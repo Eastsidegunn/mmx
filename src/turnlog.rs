@@ -147,10 +147,24 @@ fn ends_without_newline(file: &mut std::fs::File) -> std::io::Result<bool> {
 /// Rewrite the log atomically, keeping only the newest `keep` valid entries.
 pub fn rotate(log: &Path, keep: usize) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(log).unwrap_or_default();
-    let lines: Vec<&str> = text.lines().filter(|l| parse_line(l).is_some()).collect();
-    let start = lines.len().saturating_sub(keep);
+    let entries: Vec<(&str, Value)> = text
+        .lines()
+        .filter_map(|l| parse_line(l).map(|v| (l, v)))
+        .collect();
+    let start = entries.len().saturating_sub(keep);
     let mut out = String::new();
-    for line in &lines[start..] {
+    // Keep the conversation boundary: if the newest non-human turn would be
+    // rotated out, `mmx wait` would treat every kept human turn as unanswered.
+    // Keep that one entry ahead of the window.
+    if let Some(boundary) = entries
+        .iter()
+        .rposition(|(_, v)| v["by"].as_str() != Some("human"))
+        .filter(|&i| i < start)
+    {
+        out.push_str(entries[boundary].0);
+        out.push('\n');
+    }
+    for (line, _) in &entries[start..] {
         out.push_str(line);
         out.push('\n');
     }
@@ -180,6 +194,20 @@ pub fn read_entries(log: &Path) -> Vec<Value> {
     read_raw(log).into_iter().map(|(_, v)| v).collect()
 }
 
+/// Would a turn with this `by`/`note` over the current file content just
+/// repeat the newest logged turn? (Same author, same note, same bytes.)
+pub fn repeats_last(log: &Path, input: &Path, by: &str, note: Option<&str>) -> bool {
+    let Ok(bytes) = std::fs::read(input) else {
+        return false;
+    };
+    let hash = crate::state::hex_sha256(&bytes);
+    read_entries(log).last().is_some_and(|e| {
+        e["by"].as_str() == Some(by)
+            && e["note"].as_str() == note
+            && e["source_sha256"].as_str() == Some(hash.as_str())
+    })
+}
+
 /// The human turns nobody has answered yet: entries with `by == "human"`
 /// after the last entry whose `by` is anything else.
 pub fn pending_human(entries: &[Value]) -> &[Value] {
@@ -187,7 +215,15 @@ pub fn pending_human(entries: &[Value]) -> &[Value] {
         .iter()
         .rposition(|e| e["by"].as_str() != Some("human"))
         .map_or(0, |i| i + 1);
-    &entries[start..]
+    let pending = &entries[start..];
+    // A human-attributed first render with no note (e.g. a hook rendering a
+    // freshly created diagram) is the starting picture, not a message.
+    let silent_baseline = |e: &Value| {
+        e["diff"]["baseline"].as_bool() == Some(true)
+            && e["note"].as_str().is_none_or(|n| n.trim().is_empty())
+    };
+    let skip = pending.iter().take_while(|e| silent_baseline(e)).count();
+    &pending[skip..]
 }
 
 /// Generic one-line summary of a diff object: counts of the arrays (or maps)
@@ -215,6 +251,7 @@ pub fn summary(diff: &Value) -> Value {
         "edges_removed": count("edges", "removed"),
         "edges_changed": count("edges", "changed"),
         "error": error,
+        "baseline": diff["baseline"].as_bool().unwrap_or(false),
     })
 }
 
@@ -352,6 +389,33 @@ mod tests {
             .collect();
         assert!(notes.contains(&"first".to_owned()), "{notes:?}");
         assert!(notes.contains(&"second".to_owned()), "{notes:?}");
+    }
+
+    #[test]
+    fn mmx009_rotation_keeps_the_last_answer_boundary() {
+        let log = tmp("boundary");
+        append(
+            &log,
+            &entry_line("agent", Some("answer"), "h", "{}").unwrap(),
+        )
+        .unwrap();
+        for i in 0..5 {
+            append(
+                &log,
+                &entry_line("human", Some(&format!("q{i}")), "h", "{}").unwrap(),
+            )
+            .unwrap();
+        }
+        rotate(&log, 3).unwrap();
+        let entries = read_entries(&log);
+        assert_eq!(
+            entries[0]["by"], "agent",
+            "boundary kept ahead of the window"
+        );
+        assert_eq!(entries.len(), 4);
+        let pending = pending_human(&entries);
+        assert_eq!(pending.len(), 3);
+        assert_eq!(pending[2]["note"], "q4");
     }
 
     #[test]

@@ -1,0 +1,25 @@
+# mmx
+
+> mmx is a local Rust CLI where a human edits an AI agent's Mermaid diagram directly on the rendered picture (`mmx serve`), and the agent receives exactly what changed as a structured JSON diff (`mmx wait`) and answers by editing the diagram with a note (`mmx render --note`, `mmx note`). Model-agnostic; works with any agent that can run a CLI.
+
+## Agents
+
+- [AGENTS.md](https://github.com/Eastsidegunn/mmx/blob/main/AGENTS.md): step-by-step setup and the conversation loop for an AI agent
+- [SKILL.md](https://github.com/Eastsidegunn/mmx/blob/main/skills/mmx/SKILL.md): the full agent contract (turn routine, exit codes, error recovery)
+- [diff-schema.md](https://github.com/Eastsidegunn/mmx/blob/main/skills/mmx/references/diff-schema.md): every field of diff.json (v2) and state.json
+- [INSTALL.md](https://github.com/Eastsidegunn/mmx/blob/main/INSTALL.md): environment probing and user-local install paths
+
+## Humans
+
+- [README.md](https://github.com/Eastsidegunn/mmx/blob/main/README.md): what mmx is, install, try it
+- [GUIDE.md](https://github.com/Eastsidegunn/mmx/blob/main/GUIDE.md): quick starts, an example turn, commands and exit codes, limitations
+
+## Embedding
+
+- [editor/README.md](https://github.com/Eastsidegunn/mmx/blob/main/editor/README.md): the `<mmx-editor>` web component and its data contract
+
+## Project
+
+- [CHANGELOG.md](https://github.com/Eastsidegunn/mmx/blob/main/CHANGELOG.md): release history
+- [CONTRIBUTING.md](https://github.com/Eastsidegunn/mmx/blob/main/CONTRIBUTING.md): how to contribute
+- [SECURITY.md](https://github.com/Eastsidegunn/mmx/blob/main/SECURITY.md): security model and reporting

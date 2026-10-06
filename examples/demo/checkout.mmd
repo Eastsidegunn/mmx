@@ -1,0 +1,6 @@
+flowchart LR
+    %% dashed = not wired up yet
+    cart[Cart] --> pay[Payment]
+    pay --> ship[Shipping]
+    pay -.-> mail[Receipt email]
+    ship --> done([Delivered])

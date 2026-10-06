@@ -117,7 +117,18 @@ pub fn check(source: &str) -> Result<(), TurnError> {
         let mut stack: Vec<(char, usize)> = Vec::new();
         let chars: Vec<char> = line.chars().collect();
         let (mut quoted, mut piped, mut escaped) = (false, false, false);
+        // Code characters only (quoted text, |labels| and a trailing %%
+        // comment blanked out), for the dangling-arrow check below.
+        let mut code: Vec<char> = Vec::with_capacity(chars.len());
         for (col, &ch) in chars.iter().enumerate() {
+            if ch == '|' && !quoted {
+                code.push('|');
+            } else if quoted || piped {
+                code.push(' ');
+            } else if ch == '%' && chars.get(col + 1) == Some(&'%') {
+            } else {
+                code.push(ch);
+            }
             if escaped {
                 escaped = false;
                 continue;
@@ -177,8 +188,86 @@ pub fn check(source: &str) -> Result<(), TurnError> {
                 *col,
             ));
         }
+        if let Some(col) = dangling_arrow(&code) {
+            return Err(error(
+                format!("edge has no target node (line {}, column {col})", i + 1),
+                i + 1,
+                col,
+            ));
+        }
     }
     Ok(())
+}
+
+/// 1-based column of an arrow that ends the statement with nothing after it
+/// (`A -->`, `A -- text -->`, `A -->|label|`). mmdr reports these at line 1,
+/// column 1 with an unhelpful message.
+fn dangling_arrow(code: &[char]) -> Option<usize> {
+    let mut end = code.len();
+    while end > 0 && code[end - 1].is_whitespace() {
+        end -= 1;
+    }
+    // A blanked-out |label| at the end belongs to the arrow before it.
+    if end > 0 && code[end - 1] == '|' {
+        let open = code[..end - 1].iter().rposition(|&c| c == '|')?;
+        end = open;
+        while end > 0 && code[end - 1].is_whitespace() {
+            end -= 1;
+        }
+    }
+    let mut start = end;
+    while start > 0 && "-=.~<>ox".contains(code[start - 1]) {
+        start -= 1;
+    }
+    // A leading o/x glued to a word is the tail of a node id (`box-->`);
+    // after whitespace it is an arrow marker (`A o--`).
+    while start < end
+        && "ox".contains(code[start])
+        && start > 0
+        && code[start - 1].is_alphanumeric()
+    {
+        start += 1;
+    }
+    let run = &code[start..end];
+    let strokes = run.iter().filter(|c| "-=~".contains(**c)).count();
+    (run.len() >= 3 && strokes >= 2).then_some(start + 1)
+}
+
+#[cfg(test)]
+mod dangling_tests {
+    use super::check;
+
+    #[test]
+    fn mmx008_d_dangling_arrow_is_located() {
+        for (src, line, col) in [
+            ("flowchart TD\n    A --> B\n    A -->\n", 3, 7),
+            ("flowchart TD\n    A-->\n", 2, 6),
+            ("flowchart TD\n    A -- text -->\n", 2, 15),
+            ("flowchart TD\n    A -.->|later|\n", 2, 7),
+            ("flowchart TD\n    A ==> %% todo\n", 2, 7),
+            ("flowchart TD\n    A o--\n", 2, 7),
+        ] {
+            let err = check(src).expect_err(src);
+            assert_eq!((err.line, err.column), (Some(line), Some(col)), "{src}");
+            assert!(err.message.contains("no target"), "{}", err.message);
+        }
+    }
+
+    #[test]
+    fn mmx008_d_complete_edges_are_not_dangling() {
+        for src in [
+            "flowchart TD\n    A --> B\n",
+            "flowchart TD\n    A --> box\n",
+            "flowchart TD\n    A --o B\n    B --x C\n",
+            "flowchart TD\n    A[\"ends with -->\"] --> B\n",
+            "flowchart TD\n    A -->|a --> b| B\n",
+            "flowchart TD\n    A --> B %% then -->\n",
+            "flowchart TD\n    A ~~~ B\n",
+            "flowchart TD\n    A[x] --> B[y]\n",
+        ] {
+            assert!(check(src).is_ok(), "{src}");
+        }
+    }
 }
 
 pub fn warnings(model: &GraphModel, baseline: bool, out: &mut Vec<String>) {
