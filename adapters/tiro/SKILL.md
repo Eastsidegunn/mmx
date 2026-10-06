@@ -44,7 +44,9 @@ Rules:
 - Only what was actually said. No owner or date that nobody stated —
   write `Owner: ?` and add an open question instead.
 - Labels are short (≤ 40 characters) in the meeting's language; the full
-  wording goes into the text minutes under the same id.
+  wording goes into the text minutes under the same id. Keep questions
+  shorter still (≤ 20 characters): the rhombus grows with its label and
+  crowds the lane.
 - Ids are stable for the life of the minutes: never renumber. New items
   get the next free number.
 
