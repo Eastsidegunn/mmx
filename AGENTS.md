@@ -98,6 +98,10 @@ mmx wait diagram.mmd --timeout 300
   changes: `nodes`, `edges`, `subgraphs`, `direction`, `source_hunks`. Field
   reference: [skills/mmx/references/diff-schema.md](skills/mmx/references/diff-schema.md).
   A turn with a note and no changes is a question; answer it.
+- A human turn can also be an error turn (`error` non-null): the human (or a
+  client of `mmx serve`) saved Mermaid that does not parse. Fix the syntax at
+  the reported `line`/`column`, then render with `--by agent --note`
+  explaining the fix.
 - Respond by editing the `.mmd` file, then:
 
   ```bash

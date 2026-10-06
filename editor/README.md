@@ -10,6 +10,20 @@ The host wires the callbacks: write it to the `.mmd` file, POST it to a
 server, store it in a database — whatever fits the project. This is what
 makes it embeddable anywhere.
 
+## Get it
+
+`mmx-editor.js` is attached to every GitHub release:
+
+```
+https://github.com/Eastsidegunn/mmx/releases/latest/download/mmx-editor.js
+```
+
+For anything you ship, pin a version instead of `latest`:
+`https://github.com/Eastsidegunn/mmx/releases/download/vX.Y.Z/mmx-editor.js`
+(use the same version as the `mmx` that renders for it). Download it and
+serve it from your own origin; GitHub serves release assets as
+`application/octet-stream`, which browsers may refuse to run as a script.
+
 ## Use — `<mmx-editor>` (standard interface)
 
 ```html
@@ -66,6 +80,15 @@ Also available: `editor.getSource()` (serialize the current edit state),
 `editor.getNote()` (current note text, for hosts building alternate
 transports such as share links), `editor.pendingOps()` (count of unsent
 operations), `editor.destroy()`.
+
+## Embedding without an mmx binary
+
+The editor only edits; something still has to render each turn. Where no
+`mmx` binary is available (a static page, a claude.ai artifact), use the
+wasm build: `mmx_wasm.wasm` plus its loader `mmx-wasm.js` (both release
+assets) run the full turn in the page and return `{svg, diff, state}`.
+Feed `out.svg`, `out.state.nodes`, `out.state.edges` and the source back
+into `ed.load(...)`. See [`wasm/README.md`](../wasm/README.md).
 
 ## Data contract
 

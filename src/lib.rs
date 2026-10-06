@@ -133,20 +133,38 @@ pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnRes
             return emit_turn_error(
                 job,
                 &source_hash,
-                emit::DiffReport::turn_error(by, note, &err, warnings),
+                emit::DiffReport::turn_error(
+                    by,
+                    note,
+                    &err,
+                    warnings,
+                    !matches!(&prev, Prev::Loaded(_)),
+                ),
             );
         }
     };
 
     if let Err(err) = lint::check(source) {
-        let mut report = emit::DiffReport::turn_error(by, note, &err, warnings);
+        let mut report = emit::DiffReport::turn_error(
+            by,
+            note,
+            &err,
+            warnings,
+            !matches!(&prev, Prev::Loaded(_)),
+        );
         report.set_source_hunks(previous_source(&prev), source);
         return emit_turn_error(job, &source_hash, report);
     }
     let rendered = match render::render_turn(source) {
         Ok(r) => r,
         Err(err) => {
-            let mut report = emit::DiffReport::turn_error(by, note, &err, warnings);
+            let mut report = emit::DiffReport::turn_error(
+                by,
+                note,
+                &err,
+                warnings,
+                !matches!(&prev, Prev::Loaded(_)),
+            );
             report.set_source_hunks(previous_source(&prev), source);
             return emit_turn_error(job, &source_hash, report);
         }

@@ -227,7 +227,7 @@ pub fn hunks(old: &str, new: &str) -> (Vec<SourceHunk>, bool) {
 mod tests {
     use super::*;
     #[test]
-    fn mmx008_d_large_file_fallback_keeps_change_visible() {
+    fn large_file_fallback_keeps_change_visible() {
         let old = (0..2100).map(|i| format!("line {i}\n")).collect::<String>();
         let new = old.replace("line 1050", "changed 1050");
         let (h, truncated) = hunks(&old, &new);
@@ -239,7 +239,7 @@ mod tests {
         );
     }
     #[test]
-    fn mmx008_d_final_newline_change_is_visible() {
+    fn final_newline_change_is_visible() {
         let (h, truncated) = hunks("one", "one\n");
         assert!(!truncated);
         assert_eq!(
@@ -248,7 +248,7 @@ mod tests {
         );
     }
     #[test]
-    fn mmx008_d_distant_edits_in_20k_lines_reconstruct_new_text() {
+    fn distant_edits_in_20k_lines_reconstruct_new_text() {
         let old = (0..20_000)
             .map(|i| format!("line {i}\n"))
             .collect::<String>();
@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx008_d_truncated_hunk_counts_match_included_lines() {
+    fn truncated_hunk_counts_match_included_lines() {
         let old = (0..450).map(|i| format!("old {i}\n")).collect::<String>();
         let new = old.replace("old", "new");
         let (hunks, truncated) = hunks(&old, &new);
@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx008_d_truncation_keeps_fitting_hunks_whole() {
+    fn truncation_keeps_fitting_hunks_whole() {
         let old = (0..1000).map(|i| format!("line {i}\n")).collect::<String>();
         let mut new = old.clone();
         for i in 10..207 {
@@ -319,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx008_d_content_and_final_newline_change_has_marker() {
+    fn content_and_final_newline_change_has_marker() {
         let (h, _) = hunks("one\ntwo", "ONE\ntwo\n");
         assert!(h
             .iter()
@@ -333,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx008_d_crlf_hunks_strip_carriage_returns() {
+    fn crlf_hunks_strip_carriage_returns() {
         let (h, _) = hunks("one\r\ntwo\r\n", "one\ntwo changed\n");
         assert!(h
             .iter()
@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx008_d_empty_side_uses_zero_start() {
+    fn empty_side_uses_zero_start() {
         let (h, _) = hunks("", "one\n");
         assert_eq!((h[0].old_start, h[0].old_lines), (0, 0));
         let (h, _) = hunks("one\n", "");

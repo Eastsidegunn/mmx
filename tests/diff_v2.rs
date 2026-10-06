@@ -6,7 +6,7 @@ use std::{
 fn dir() -> PathBuf {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let p = std::env::temp_dir().join(format!(
-        "mmx008-{}-{}",
+        "diff-v2-test-{}-{}",
         std::process::id(),
         N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     ));
@@ -24,7 +24,7 @@ fn turn(p: &Path, src: &str) -> (i32, Value) {
     (o.status.code().unwrap(), v)
 }
 #[test]
-fn mmx008_d_rich_entries_and_style() {
+fn rich_entries_and_style() {
     let p = dir();
     turn(&p, "flowchart TD\n A[Alpha] --> B[Beta]\n");
     let (_, v) = turn(&p, "flowchart TD\n A[Alpha] -.-> C[Gamma]\n");
@@ -51,7 +51,7 @@ fn mmx008_d_rich_entries_and_style() {
     );
 }
 #[test]
-fn mmx008_d_direction_subgraphs_and_hunks() {
+fn direction_subgraphs_and_hunks() {
     let p = dir();
     turn(&p, "flowchart TD\n A --> B\n");
     let (_, v) = turn(&p, "flowchart LR\n subgraph S [Old]\n A --> B\n end\n");
@@ -67,7 +67,7 @@ fn mmx008_d_direction_subgraphs_and_hunks() {
     assert_eq!(v["subgraphs"]["removed"][0]["label"], "New");
 }
 #[test]
-fn mmx008_d_style_source_hunks_and_cap() {
+fn style_source_hunks_and_cap() {
     let p = dir();
     turn(&p, "flowchart TD\n A --> B\n classDef w fill:#f00\n");
     let (_, v) = turn(&p, "flowchart TD\n A --> B\n classDef w fill:#0f0\n");
@@ -105,7 +105,7 @@ fn mmx008_d_style_source_hunks_and_cap() {
     assert_eq!(n, 400);
 }
 #[test]
-fn mmx008_d_v1_upgrade_and_nonflow_warning() {
+fn v1_upgrade_and_nonflow_warning() {
     let p = dir();
     turn(&p, "flowchart TD\n A --> B\n");
     let state_path = p.join("d.state.json");
@@ -138,7 +138,7 @@ fn mmx008_d_v1_upgrade_and_nonflow_warning() {
     );
 }
 #[test]
-fn mmx008_d_lint_positions() {
+fn lint_positions() {
     let p = dir();
     let (exit, v) = turn(&p, "%% comment\n\n A --> B\n");
     assert_eq!(exit, 2);
@@ -163,7 +163,7 @@ fn mmx008_d_lint_positions() {
 }
 
 #[test]
-fn mmx008_d_front_matter_closes_before_header() {
+fn front_matter_closes_before_header() {
     for front in [
         "---\ntitle: x\n---\n",
         "\n---\nconfig:\n  theme: forest\n---\n",
@@ -183,7 +183,7 @@ fn mmx008_d_front_matter_closes_before_header() {
 }
 
 #[test]
-fn mmx008_d_angle_text_in_shapes() {
+fn angle_text_in_shapes() {
     for line in [
         "A[line1<br>line2] --> B",
         "A[List<T>] --> B",
@@ -201,14 +201,14 @@ fn mmx008_d_angle_text_in_shapes() {
 }
 
 #[test]
-fn mmx008_d_trailing_comment_is_not_shape_text() {
+fn trailing_comment_is_not_shape_text() {
     let p = dir();
     let (exit, v) = turn(&p, "flowchart TD\nA[x] --> B %% todo (fix\n");
     assert_eq!(exit, 0, "{v}");
 }
 
 #[test]
-fn mmx008_d_parallel_edges_match_style_before_position() {
+fn parallel_edges_match_style_before_position() {
     let p = dir();
     turn(&p, "flowchart TD\nA --> B\nA -.-> B\nA ==> B\n");
     let (_, v) = turn(&p, "flowchart TD\nA --> B\nA ==> B\n");
@@ -228,7 +228,7 @@ fn mmx008_d_parallel_edges_match_style_before_position() {
 }
 
 #[test]
-fn mmx008_d_subgraph_direction_change() {
+fn subgraph_direction_change() {
     let p = dir();
     turn(
         &p,
@@ -245,7 +245,7 @@ fn mmx008_d_subgraph_direction_change() {
 }
 
 #[test]
-fn mmx008_d_same_label_subgraphs_remain_distinct() {
+fn same_label_subgraphs_remain_distinct() {
     let p = dir();
     let before = "flowchart TD\nsubgraph Same X\nA\nend\nsubgraph Same X\nB\nend\n";
     let after = "flowchart TD\nsubgraph Same X\nA\nend\nsubgraph Same X\nC\nend\n";
@@ -260,7 +260,7 @@ fn mmx008_d_same_label_subgraphs_remain_distinct() {
 }
 
 #[test]
-fn mmx008_d_crlf_conversion_warns_without_line_changes() {
+fn crlf_conversion_warns_without_line_changes() {
     let p = dir();
     turn(&p, "flowchart TD\r\nA --> B\r\n");
     let (_, v) = turn(&p, "flowchart TD\nA --> B\n");
@@ -273,7 +273,7 @@ fn mmx008_d_crlf_conversion_warns_without_line_changes() {
 }
 
 #[test]
-fn mmx008_d_nonflow_warning_mentions_partial_diff() {
+fn nonflow_warning_mentions_partial_diff() {
     let p = dir();
     let (_, baseline) = turn(&p, "classDiagram\nA <|-- B\n");
     assert_eq!(
@@ -285,7 +285,7 @@ fn mmx008_d_nonflow_warning_mentions_partial_diff() {
 }
 
 #[test]
-fn mmx008_d_mermaid_js_lint_policy() {
+fn mermaid_js_lint_policy() {
     for source in [
         "flowchart TD\nA[foo (bar]\n",
         "flowchart TD\nA[a|b]\n",

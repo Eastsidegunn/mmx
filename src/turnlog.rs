@@ -201,10 +201,13 @@ pub fn repeats_last(log: &Path, input: &Path, by: &str, note: Option<&str>) -> b
         return false;
     };
     let hash = crate::state::hex_sha256(&bytes);
+    // An error turn is never repeated away: a retry must report the error
+    // again (exit 2), not a silent success.
     read_entries(log).last().is_some_and(|e| {
         e["by"].as_str() == Some(by)
             && e["note"].as_str() == note
             && e["source_sha256"].as_str() == Some(hash.as_str())
+            && e["diff"]["error"].is_null()
     })
 }
 
@@ -220,6 +223,7 @@ pub fn pending_human(entries: &[Value]) -> &[Value] {
     // freshly created diagram) is the starting picture, not a message.
     let silent_baseline = |e: &Value| {
         e["diff"]["baseline"].as_bool() == Some(true)
+            && e["diff"]["error"].is_null()
             && e["note"].as_str().is_none_or(|n| n.trim().is_empty())
     };
     let skip = pending.iter().take_while(|e| silent_baseline(e)).count();
@@ -342,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx008_w_append_after_torn_line_stays_readable() {
+    fn append_after_torn_line_stays_readable() {
         let log = tmp("torn");
         append(&log, &entry_line("agent", None, "h", "{}").unwrap()).unwrap();
         std::fs::OpenOptions::new()
@@ -362,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx008_w_concurrent_appends_survive_rotation() {
+    fn concurrent_appends_survive_rotation() {
         let log = tmp("race");
         let pad = "x".repeat(4 * 1024);
         while std::fs::metadata(&log).map_or(0, |m| m.len()) <= MAX_BYTES {
@@ -392,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx009_rotation_keeps_the_last_answer_boundary() {
+    fn rotation_keeps_the_last_answer_boundary() {
         let log = tmp("boundary");
         append(
             &log,
@@ -419,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx008_w_rotation_keeps_newest_200() {
+    fn rotation_keeps_newest_200() {
         let log = tmp("rotate");
         // ~4 KiB per entry: ~500 entries before the log passes MAX_BYTES.
         let pad = "x".repeat(4 * 1024);
@@ -451,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn mmx008_w_pending_and_summary() {
+    fn pending_and_summary() {
         let e = |by: &str| json!({"by": by});
         let entries = vec![e("human"), e("agent"), e("human"), e("human")];
         assert_eq!(pending_human(&entries).len(), 2);

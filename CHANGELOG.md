@@ -2,6 +2,24 @@
 
 All notable changes to mmx are documented here. This follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-10-06
+
+### Added
+
+- `mmx-wasm.js`, a dependency-free loader for `mmx_wasm.wasm` (WASI shim included), shipped as a release asset and documented in `wasm/README.md` with the ABI and request/response JSON. The wasm module gains `wasm_free`, so hosts no longer leak the request buffer.
+
+### Fixed
+
+- Repeated `mmx note` messages over unchanged bytes are deduplicated (a retry over an error turn still reports the error).
+- A parse error on a first render is printed by `--print-if-changed` again, so hooks deliver it to the agent.
+- Parse errors on a first or otherwise unusable baseline are marked as baseline turns and remain visible to `mmx wait`.
+- `mmx doctor` validates hook runner paths and gives an appropriate warning for an unused missing Codex skill.
+
+### Changed
+
+- `mmx init` reports identical files as unchanged and the onboarding/artifact defaults are English.
+- Docs: where to get `mmx-editor.js`, that a human turn can be an error turn the agent fixes, that a leftover `.serve.json` is harmless, and a PATH hint after install.
+
 ## [0.4.0] - 2026-10-06
 
 ### Added
@@ -48,6 +66,7 @@ All notable changes to mmx are documented here. This follows [Keep a Changelog](
 - Initial `mmx render` workflow: render Mermaid to SVG, emit a per-turn `diff.json` and comparison `state.json`, and report parse or encoding errors with exit status 2.
 - Agent skill, installation guide, hook examples, and sample diagrams.
 
+[0.4.1]: https://github.com/Eastsidegunn/mmx/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Eastsidegunn/mmx/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Eastsidegunn/mmx/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Eastsidegunn/mmx/compare/v0.1.0...v0.2.0

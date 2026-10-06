@@ -238,7 +238,7 @@ mod dangling_tests {
     use super::check;
 
     #[test]
-    fn mmx008_d_dangling_arrow_is_located() {
+    fn dangling_arrow_is_located() {
         for (src, line, col) in [
             ("flowchart TD\n    A --> B\n    A -->\n", 3, 7),
             ("flowchart TD\n    A-->\n", 2, 6),
@@ -254,7 +254,7 @@ mod dangling_tests {
     }
 
     #[test]
-    fn mmx008_d_complete_edges_are_not_dangling() {
+    fn complete_edges_are_not_dangling() {
         for src in [
             "flowchart TD\n    A --> B\n",
             "flowchart TD\n    A --> box\n",
@@ -289,7 +289,7 @@ pub fn warnings(model: &GraphModel, baseline: bool, out: &mut Vec<String>) {
 mod tests {
     use super::*;
     #[test]
-    fn mmx008_d_valid_flowchart_syntax_table() {
+    fn valid_flowchart_syntax_table() {
         for line in [
             "A>asym]",
             "A[/x/]",

@@ -1,4 +1,4 @@
-<title>mmx 대화 보드</title>
+<title>mmx conversation board</title>
 <style>
 :root{
   --bg:#F7F6F3; --surface:#FFFFFF; --ink:#23272E; --muted:#6E6A63;
@@ -30,19 +30,19 @@ code{font-family:ui-monospace,Menlo,monospace;}
 </style>
 
 <div class="wrap">
-  <h1>mmx 온보딩 흐름</h1>
-  <p class="meta" id="turnmeta">불러오는 중…</p>
+  <h1>mmx onboarding flow</h1>
+  <p class="meta" id="turnmeta">Loading…</p>
   <div id="hashbanner" hidden style="background:var(--surface); border:1px solid var(--accent); border-radius:10px; padding:12px 16px; font-size:13.5px;">
-    URL에 실려 온 편집이 있습니다: <span id="hashnote" style="color:var(--muted)"></span>
-    <button id="hashsend" style="margin-left:10px; background:var(--accent); color:#fff; border:none; border-radius:8px; padding:6px 14px; font-weight:600; cursor:pointer;">이 편집을 보내기</button>
+    An edit arrived in the URL: <span id="hashnote" style="color:var(--muted)"></span>
+    <button id="hashsend" style="margin-left:10px; background:var(--accent); color:#fff; border:none; border-radius:8px; padding:6px 14px; font-weight:600; cursor:pointer;">Send this edit</button>
   </div>
   <div id="editor" style="--mmx-accent:#B04A17; --mmx-select:#2563EB;"></div>
   <div style="display:flex; gap:8px; align-items:center;">
-    <button id="makelink" style="background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:7px 14px; font-size:13px; cursor:pointer;">링크로 만들기</button>
+    <button id="makelink" style="background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:7px 14px; font-size:13px; cursor:pointer;">Make a link</button>
     <input id="linkout" type="text" readonly hidden style="flex:1; min-width:200px; background:var(--surface); color:var(--muted); border:1px solid var(--border); border-radius:8px; padding:7px 11px; font-size:12.5px;">
   </div>
   <p id="status"></p>
-  <p class="hint">노드·화살표를 <b>클릭</b>하면 수정/삭제 메뉴, 노드 가장자리 <b>● 핸들을 끌면</b> 마우스로 연결, <b>노드를 끌면</b> 임시 배치(생각 정리용 — 전송하면 자동 정렬로 복귀)입니다. 이 보드는 mmx의 임베더블 모듈을 꽂아 쓰는 얇은 껍데기이고, 보내면 CLI의 Claude가 <code>mmx render --by human</code>으로 확정하고 새 그림이 실시간 반영됩니다.</p>
+  <p class="hint"><b>Click</b> a node or arrow for Edit/Delete, <b>drag ● handles</b> to connect nodes, or <b>drag nodes</b> for temporary positioning (sending restores Auto layout). This board is a thin shell around mmx's embeddable module; Claude confirms submissions with <code>mmx render --by human</code> and the updated picture appears live.</p>
 </div>
 
 <script src="mmx-editor.js"></script>
@@ -55,45 +55,45 @@ code{font-family:ui-monospace,Menlo,monospace;}
   var pendingSubmit = null;
   var editor = MmxEditor.mount(document.getElementById('editor'), {
     strings: {
-      addNode: '+ 새 노드', send: '보내기', revert: '모두 되돌리기', autoLayout: '자동 정렬',
-      notePlaceholder: '한마디 (mmx --note로 기록됩니다)',
-      menuEdit: '✏ 수정', menuDelete: '✕ 삭제', menuLabel: '라벨', apply: '✓', label: '라벨',
-      pendingOps: function(n){ return '반영 대기 조작 ' + n + '건'; },
-      idle: '노드·화살표 클릭 = 메뉴 · ● 핸들 드래그 = 연결 · 노드 드래그 = 임시 배치',
-      manualMode: '수동 배치(임시) — 보내기나 새 턴이 오면 자동 정렬로 돌아갑니다',
-      connected: function(a,b){ return a + ' → ' + b + ' 연결됨'; },
-      deleted: function(id){ return id + ' 삭제됨 — 다시 클릭하면 취소'; },
-      nothingToSend: '바뀐 것이 없습니다', staged: '(배치 대기)', newNodeLabel: '새 노드'
+      addNode: '+ New node', send: 'Send', revert: 'Revert all', autoLayout: 'Auto layout',
+      notePlaceholder: 'A note (recorded with --note)',
+      menuEdit: '✏ Edit', menuDelete: '✕ Delete', menuLabel: 'Label', apply: '✓', label: 'Label',
+      pendingOps: function(n){ return n + ' pending operation' + (n === 1 ? '' : 's'); },
+      idle: 'Click nodes or arrows = menu · drag handles = connect · drag nodes = temporary position',
+      manualMode: 'Manual positioning (temporary) — sending or a new turn restores Auto layout',
+      connected: function(a,b){ return a + ' → ' + b + ' connected'; },
+      deleted: function(id){ return id + ' deleted — click again to undo'; },
+      nothingToSend: 'Nothing changed', staged: '(pending)', newNodeLabel: 'New node'
     },
     onSubmit: function(r){ if (pendingSubmit) pendingSubmit(r); }
   });
 
   claude.use('db').then(function(db){
-    if (!db){ setStatus('이 보기에서는 저장소를 쓸 수 없어 읽기 전용입니다.'); return; }
+    if (!db){ setStatus('Storage is unavailable in this view; read-only mode.'); return; }
 
     db.doc('board/current').onSnapshot(function(snap){
       if (!snap.exists) return;
       var d = snap.data();
       var who = d.by === 'human' ? 'human' : 'agent';
-      turnmeta.innerHTML = '턴 ' + (d.seq || '?') + ' · <b class="' + who + '">' + who + '</b> — ';
-      turnmeta.appendChild(document.createTextNode(d.note || '(note 없음)'));
+      turnmeta.innerHTML = 'Turn ' + (d.seq || '?') + ' · <b class="' + who + '">' + who + '</b> — ';
+      turnmeta.appendChild(document.createTextNode(d.note || '(no note)'));
       editor.update({svg: d.svg, nodes: d.nodes, edges: d.edges, source: d.source});
-    }, function(){ setStatus('실시간 갱신이 끊겼습니다. 새로고침 해주세요.'); });
+    }, function(){ setStatus('Live updates stopped; please reload.'); });
 
     var sending = false;
     pendingSubmit = function(r){
       if (sending) return;
-      sending = true; setStatus('전송 중…');
+      sending = true; setStatus('Sending…');
       db.collection('inbox').add({
         source: r.source, note: r.note, status: 'new', sentAtMs: Date.now()
       }).then(function(){
-        setStatus('전송됨 — Claude가 다음 턴에 읽어갑니다. CLI에서 아무 메시지나 보내면 바로 처리돼요.', true);
+        setStatus('Sent — Claude will read it on the next turn.', true);
       }).catch(function(e){
-        setStatus('전송 실패 (' + (e && e.code ? e.code : '알 수 없음') + ') — 다시 시도해 주세요.');
+        setStatus('Send failed (' + (e && e.code ? e.code : 'unknown') + ') — please try again.');
       }).finally(function(){ sending = false; });
     };
 
-    // URL 프래그먼트로 편집+한마디 싣기 (mermaid.live 방식, 다른 세션이 추가한 기능의 이식)
+    // Put an edit and note in the URL fragment, like mermaid.live.
     function b64e(s){ return btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
     function b64d(s){ return decodeURIComponent(escape(atob(s.replace(/-/g,'+').replace(/_/g,'/')))); }
     document.getElementById('makelink').addEventListener('click', function(){
@@ -102,7 +102,7 @@ code{font-family:ui-monospace,Menlo,monospace;}
       var lo = document.getElementById('linkout');
       lo.hidden = false; lo.value = url; lo.focus(); lo.select();
       try { history.replaceState(null, '', '#mmx=' + payload); } catch(e){}
-      setStatus('이 링크를 복사해 CLI의 Claude에게 붙여넣으면, 그 자체가 편집+한마디 전달입니다.', true);
+      setStatus('Copy this link into Claude CLI to send the edit and note.', true);
     });
     (function loadFromHash(){
       var m = /[#&]mmx=([A-Za-z0-9_-]+)/.exec(location.hash);
@@ -111,7 +111,7 @@ code{font-family:ui-monospace,Menlo,monospace;}
         var p = JSON.parse(b64d(m[1]));
         if (!p || typeof p.s !== 'string') return;
         var banner = document.getElementById('hashbanner');
-        document.getElementById('hashnote').textContent = p.n ? '"' + p.n + '"' : '(한마디 없음)';
+        document.getElementById('hashnote').textContent = p.n ? '"' + p.n + '"' : '(no note)';
         banner.hidden = false;
         document.getElementById('hashsend').addEventListener('click', function(){
           banner.hidden = true;

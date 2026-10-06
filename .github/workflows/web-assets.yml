@@ -1,5 +1,5 @@
 # Attaches the browser pieces to each GitHub release: the <mmx-editor>
-# component and the wasm build of a full mmx turn. Runs on the version tag
+# component, the wasm build of a full mmx turn and its JS loader. Runs on the version tag
 # and waits for the release that the dist workflow (release.yml) creates;
 # a release made with GITHUB_TOKEN does not trigger `release` events.
 name: Web assets
@@ -25,6 +25,11 @@ jobs:
           workspaces: wasm
       - name: Build mmx_wasm.wasm
         run: cargo build --manifest-path wasm/Cargo.toml --target wasm32-wasip1 --release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check the wasm build with its loader
+        run: node wasm/check.mjs wasm/target/wasm32-wasip1/release/mmx_wasm.wasm
       - name: Wait for the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,4 +46,5 @@ jobs:
         run: |
           gh release upload "$GITHUB_REF_NAME" --clobber \
             wasm/target/wasm32-wasip1/release/mmx_wasm.wasm \
+            wasm/mmx-wasm.js \
             editor/mmx-editor.js

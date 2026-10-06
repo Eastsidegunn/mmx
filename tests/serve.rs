@@ -29,7 +29,7 @@ fn tempdir() -> PathBuf {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "mmx002-{}-{}-{}",
+        "serve-test-{}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -159,7 +159,7 @@ fn sse_next(reader: &mut BufReader<TcpStream>) -> Value {
 }
 
 #[test]
-fn mmx002_t1_fixed_routes_and_traversal() {
+fn fixed_routes_and_traversal() {
     let s = start(A);
     let (status, page) = request(s.addr, "GET", "/", None);
     assert_eq!(status, 200);
@@ -182,7 +182,7 @@ fn mmx002_t1_fixed_routes_and_traversal() {
 }
 
 #[test]
-fn mmx002_t2_initial_state_is_stable_baseline() {
+fn initial_state_is_stable_baseline() {
     let s = start(A);
     let (status, first) = request(s.addr, "GET", "/state", None);
     let (_, second) = request(s.addr, "GET", "/state", None);
@@ -198,7 +198,7 @@ fn mmx002_t2_initial_state_is_stable_baseline() {
 }
 
 #[test]
-fn mmx002_t3_human_turn_writes_diff_and_state() {
+fn human_turn_writes_diff_and_state() {
     let s = start(A);
     let result = post(s.addr, B, "추가");
     assert_eq!(result["exit"], 0);
@@ -223,7 +223,7 @@ fn mmx002_t3_human_turn_writes_diff_and_state() {
 }
 
 #[test]
-fn mmx002_t4_parse_error_keeps_last_valid_artifacts() {
+fn parse_error_keeps_last_valid_artifacts() {
     let s = start(A);
     let svg = std::fs::read(s.dir.join("d.svg")).unwrap();
     let state = std::fs::read(s.dir.join("d.state.json")).unwrap();
@@ -248,9 +248,9 @@ fn mmx002_t4_parse_error_keeps_last_valid_artifacts() {
 }
 
 #[test]
-fn mmx002_t5_noop_preserves_diff_bytes() {
+fn noop_preserves_diff_bytes() {
     // Identical source with no note (or a whitespace note) stays a no-op;
-    // a real note makes it a turn instead (mmx005 below).
+    // a real note makes it a turn instead.
     let s = start(A);
     post(s.addr, B, "첫 턴");
     let diff = std::fs::read(s.dir.join("d.diff.json")).unwrap();
@@ -263,7 +263,7 @@ fn mmx002_t5_noop_preserves_diff_bytes() {
 }
 
 #[test]
-fn mmx005_note_only_turn_is_a_real_turn() {
+fn note_only_turn_is_a_real_turn() {
     // A note with zero diagram changes is a turn — the
     // human asking a question. It bumps seq and lands in diff.json.
     let s = start(A);
@@ -287,7 +287,7 @@ fn mmx005_note_only_turn_is_a_real_turn() {
 }
 
 #[test]
-fn mmx005_unpolled_agent_edit_conflicts_instead_of_overwrite() {
+fn unpolled_agent_edit_conflicts_instead_of_overwrite() {
     // The poller needs two identical sightings (~600ms) before an external
     // edit becomes a turn. A human submit in that window used to overwrite
     // the agent's file silently (base_seq cannot catch it: seq is unmoved).
@@ -312,7 +312,7 @@ fn mmx005_unpolled_agent_edit_conflicts_instead_of_overwrite() {
 }
 
 #[test]
-fn mmx002_t6_sse_external_and_turn_broadcast_without_poll_duplicate() {
+fn sse_external_and_turn_broadcast_without_poll_duplicate() {
     let s = start(A);
     let mut reader = sse_connect(s.addr);
     assert_eq!(sse_next(&mut reader)["seq"], 0);
@@ -350,7 +350,7 @@ fn mmx002_t6_sse_external_and_turn_broadcast_without_poll_duplicate() {
 }
 
 #[test]
-fn mmx002_t7_bind_is_loopback_by_default_and_rejects_external() {
+fn bind_is_loopback_by_default_and_rejects_external() {
     let s = start(A);
     assert!(s.addr.ip().is_loopback());
     let output = Command::new(env!("CARGO_BIN_EXE_mmx"))
@@ -363,7 +363,7 @@ fn mmx002_t7_bind_is_loopback_by_default_and_rejects_external() {
 }
 
 #[test]
-fn mmx002_t8_concurrent_turns_are_serialized() {
+fn concurrent_turns_are_serialized() {
     let s = start(A);
     let barrier = Arc::new(Barrier::new(3));
     let handles: Vec<_> = [B, C]
@@ -390,7 +390,7 @@ fn mmx002_t8_concurrent_turns_are_serialized() {
 }
 
 #[test]
-fn mmx002_t9_truncated_headers_do_not_spin() {
+fn truncated_headers_do_not_spin() {
     let s = start(A);
     let mut stream = TcpStream::connect(s.addr).unwrap();
     stream
@@ -410,7 +410,7 @@ fn mmx002_t9_truncated_headers_do_not_spin() {
 }
 
 #[test]
-fn mmx002_t10_unterminated_large_header_is_bounded() {
+fn unterminated_large_header_is_bounded() {
     let s = start(A);
     let mut stream = TcpStream::connect(s.addr).unwrap();
     stream
@@ -431,7 +431,7 @@ fn mmx002_t10_unterminated_large_header_is_bounded() {
 }
 
 #[test]
-fn mmx002_t11_content_type_origin_and_host_checks() {
+fn content_type_origin_and_host_checks() {
     let s = start(A);
     let body = json!({"source":B}).to_string();
     let make = |extra: &str| {
@@ -473,7 +473,7 @@ fn mmx002_t11_content_type_origin_and_host_checks() {
 }
 
 #[test]
-fn mmx002_t12_stale_base_seq_conflicts_without_write() {
+fn stale_base_seq_conflicts_without_write() {
     let s = start(A);
     assert_eq!(post(s.addr, B, "first")["exit"], 0);
     let body = json!({"source":C,"base_seq":0}).to_string();
@@ -488,7 +488,7 @@ fn mmx002_t12_stale_base_seq_conflicts_without_write() {
 }
 
 #[test]
-fn mmx002_t13_restart_changes_epoch_and_keeps_state() {
+fn restart_changes_epoch_and_keeps_state() {
     let first = start(A);
     let old_epoch = sse_next(&mut sse_connect(first.addr))["epoch"]
         .as_u64()
@@ -506,7 +506,7 @@ fn mmx002_t13_restart_changes_epoch_and_keeps_state() {
 }
 
 #[test]
-fn mmx002_t14_loopback_alias_and_external_override() {
+fn loopback_alias_and_external_override() {
     let base = start(A);
     let local = start_dir(base.dir.clone(), &["--addr", "localhost:0"]);
     assert!(local.addr.ip().is_loopback());
@@ -518,7 +518,7 @@ fn mmx002_t14_loopback_alias_and_external_override() {
     assert_eq!(request(external.addr, "GET", "/state", None).0, 200);
 }
 
-// ---- mmx008: turn log, `mmx wait`, `mmx note` with a live serve ----
+// ---- Turn log, `mmx wait`, `mmx note` with a live serve ----
 
 fn mmx_cmd(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_mmx"))
@@ -529,7 +529,7 @@ fn mmx_cmd(dir: &Path, args: &[&str]) -> std::process::Output {
 }
 
 #[test]
-fn mmx008_w_wait_returns_when_human_posts_to_serve() {
+fn wait_returns_when_human_posts_to_serve() {
     let s = start(A);
     assert!(s.dir.join("d.serve.json").exists());
     let mut wait = Command::new(env!("CARGO_BIN_EXE_mmx"))
@@ -562,7 +562,7 @@ fn mmx008_w_wait_returns_when_human_posts_to_serve() {
 }
 
 #[test]
-fn mmx008_w_serve_reflects_external_note() {
+fn serve_reflects_external_note() {
     let s = start(A);
     let mut reader = sse_connect(s.addr);
     assert_eq!(sse_next(&mut reader)["seq"], 0);
@@ -586,7 +586,7 @@ fn mmx008_w_serve_reflects_external_note() {
 }
 
 #[test]
-fn mmx008_w_base_seq_taken_before_external_note_is_stale() {
+fn base_seq_taken_before_external_note_is_stale() {
     let s = start(A);
     let seq = get_json(s.addr, "/state")["seq"].as_u64().unwrap();
     assert!(mmx_cmd(&s.dir, &["note", "d.mmd", "에이전트가 먼저"])
@@ -603,7 +603,7 @@ fn mmx008_w_base_seq_taken_before_external_note_is_stale() {
 }
 
 #[test]
-fn mmx008_w_history_lists_turns_across_restart() {
+fn history_lists_turns_across_restart() {
     let first = start(A);
     assert_eq!(post(first.addr, B, "하나")["exit"], 0);
     assert!(mmx_cmd(&first.dir, &["note", "d.mmd", "답"])

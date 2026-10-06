@@ -256,15 +256,16 @@ impl DiffReport {
         }
     }
 
-    /// Parse/encoding error turn (exit 2). Not a baseline: the text changed
-    /// since the last committed state (or there is none), so source_changed.
+    /// Parse/encoding error turn (exit 2).
     pub fn turn_error(
         by: &str,
         note: Option<&str>,
         err: &TurnError,
         warnings: Vec<String>,
+        baseline: bool,
     ) -> Self {
         DiffReport {
+            baseline,
             source_changed: true,
             error: Some(ErrorEntry {
                 kind: err.kind.into(),
@@ -280,7 +281,10 @@ impl DiffReport {
     /// Whether `--print-if-changed` should emit this report: a non-baseline
     /// turn whose semantic diff is non-empty or whose source changed.
     pub fn is_printable(&self) -> bool {
-        !self.baseline && (self.source_changed || !self.is_semantically_empty())
+        // An error turn is always news, even on a first render: hooks deliver
+        // it to the agent from stdout.
+        self.error.is_some()
+            || (!self.baseline && (self.source_changed || !self.is_semantically_empty()))
     }
 
     pub fn is_semantically_empty(&self) -> bool {

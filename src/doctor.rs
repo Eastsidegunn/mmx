@@ -204,6 +204,8 @@ pub fn run(diagram: Option<&Path>) -> bool {
         }
     }
 
+    let claude = hook_commands(Path::new(".claude/settings.json"));
+    let codex = hook_commands(Path::new(".codex/hooks.json"));
     if let Some(home) = home() {
         good &= skill(
             &home.join(".claude/skills/mmx/SKILL.md"),
@@ -211,11 +213,17 @@ pub fn run(diagram: Option<&Path>) -> bool {
             "mmx init",
         );
         if home.join(".codex").exists() {
-            good &= skill(
-                &home.join(".codex/skills/mmx/SKILL.md"),
-                "Codex",
-                "mmx init --codex",
-            );
+            let codex_skill = home.join(".codex/skills/mmx/SKILL.md");
+            let codex_hooks_reference_runner = !codex.is_empty();
+            if codex_hooks_reference_runner || codex_skill.exists() {
+                good &= skill(&codex_skill, "Codex", "mmx init --codex");
+            } else {
+                line(
+                    "warn",
+                    "Codex skill not installed — run `mmx init --codex` if you use Codex",
+                    None,
+                );
+            }
         }
     } else {
         line(
@@ -226,8 +234,6 @@ pub fn run(diagram: Option<&Path>) -> bool {
         good = false;
     }
 
-    let claude = hook_commands(Path::new(".claude/settings.json"));
-    let codex = hook_commands(Path::new(".codex/hooks.json"));
     let configured = !claude.is_empty() || !codex.is_empty();
     let configured_diagram = claude
         .iter()
@@ -245,25 +251,59 @@ pub fn run(diagram: Option<&Path>) -> bool {
         quote(&configured_diagram)
     );
     if configured {
-        // Projects set up before 0.4 keep the runner in adapters/.
-        let script = if std::path::Path::new(init::HOOK_REL).exists()
-            || !std::path::Path::new("adapters/mmx_hook.py").exists()
+        let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        // One verdict per harness and runner path (each harness has a post
+        // and a prompt command pointing at the same runner).
+        let mut seen = std::collections::BTreeSet::new();
+        for (name, command) in claude
+            .iter()
+            .map(|c| ("Claude Code", c))
+            .chain(codex.iter().map(|c| ("Codex", c)))
         {
-            init::HOOK_REL
-        } else {
-            "adapters/mmx_hook.py"
-        };
-        match std::fs::read_to_string(script) {
-            Ok(text) if text == init::hook() => {
-                line("ok", "hook script matches installed mmx", None)
-            }
-            Ok(_) => {
-                line("FAIL", "hook script is stale", Some(&init_command));
+            let args = words(command);
+            let Some(raw) = args.iter().find(|arg| arg.ends_with("mmx_hook.py")) else {
+                line(
+                    "FAIL",
+                    &format!("{name} hook command has no mmx_hook.py script path"),
+                    Some(&init_command),
+                );
                 good = false;
+                continue;
+            };
+            let dir = project.to_string_lossy();
+            let raw = raw
+                .replace("${CLAUDE_PROJECT_DIR}", &dir)
+                .replace("$CLAUDE_PROJECT_DIR", &dir);
+            if !seen.insert((name, raw.clone())) {
+                continue;
             }
-            Err(_) => {
-                line("FAIL", "hook script is missing", Some(&init_command));
-                good = false;
+            let script = PathBuf::from(raw);
+            let inside = script
+                .canonicalize()
+                .ok()
+                .is_some_and(|p| p.starts_with(&project));
+            match std::fs::read_to_string(&script) {
+                Ok(text) if text == init::hook() && (name == "Claude Code" || inside) => line(
+                    "ok",
+                    &format!("{name} hook script matches installed mmx"),
+                    None,
+                ),
+                Ok(_) => {
+                    line(
+                        "FAIL",
+                        &format!("{name} hook script is stale or outside the current project"),
+                        Some(&init_command),
+                    );
+                    good = false;
+                }
+                Err(_) => {
+                    line(
+                        "FAIL",
+                        &format!("{name} hook script is missing or outside the current project"),
+                        Some(&init_command),
+                    );
+                    good = false;
+                }
             }
         }
     }

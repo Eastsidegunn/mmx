@@ -21,6 +21,14 @@ pub extern "C" fn wasm_alloc(len: usize) -> *mut u8 {
     unsafe { alloc(Layout::from_size_align(len.max(1), 1).unwrap()) }
 }
 
+/// Free a buffer from `wasm_alloc` (same `len`) once `wasm_turn` returned.
+#[no_mangle]
+pub extern "C" fn wasm_free(ptr: *mut u8, len: usize) {
+    if !ptr.is_null() {
+        unsafe { std::alloc::dealloc(ptr, Layout::from_size_align(len.max(1), 1).unwrap()) }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn wasm_result_len() -> usize {
     LAST.with(|l| l.borrow().len())
@@ -66,7 +74,8 @@ fn run(input: &[u8]) -> Result<String, String> {
     let rendered = match lint::check(source).and_then(|_| render::render_turn(source)) {
         Ok(r) => r,
         Err(err) => {
-            let mut report = emit::DiffReport::turn_error(by, note, &err, Vec::new());
+            let mut report =
+                emit::DiffReport::turn_error(by, note, &err, Vec::new(), prev.is_none());
             report.set_source_hunks(prev.as_ref().and_then(|p| p.source.as_deref()), source);
             let diff_json = report.to_json().map_err(|e| e.to_string())?;
             return Ok(format!("{{\"exit\":2,\"diff\":{diff_json}}}"));

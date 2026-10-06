@@ -558,6 +558,16 @@ fn init_installs_skill_and_hooks() {
     assert!(settings.contains("docs/arch.mmd"));
     assert!(!settings.contains("--diagram diagram.mmd"));
 
+    let out = Command::new(env!("CARGO_BIN_EXE_mmx"))
+        .current_dir(&project)
+        .env("HOME", &fake_home)
+        .args(["init", "--hooks", "docs/arch.mmd"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("unchanged "));
+
     // Existing settings.json must not be clobbered.
     std::fs::write(project.join(".claude/settings.json"), "{\"custom\":true}").unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mmx"))
@@ -574,7 +584,7 @@ fn init_installs_skill_and_hooks() {
     assert!(project.join(".claude/settings.mmx.json").exists());
 }
 
-// ---- mmx008: turn log, `mmx note`, `mmx wait` (no serve) ----
+// ---- Turn log, `mmx note`, `mmx wait` (no serve) ----
 
 const W_A: &str = "flowchart LR\n    A --> B\n";
 const W_B: &str = "flowchart LR\n    A --> B\n    B --> C\n";
@@ -594,7 +604,7 @@ fn ok(dir: &Path, args: &[&str]) {
 }
 
 #[test]
-fn mmx008_w_log_appends_on_ok_and_parse_error_not_noop() {
+fn log_appends_on_ok_and_parse_error_not_noop() {
     let dir = tempdir();
     write(&dir, "d.mmd", W_A);
     ok(&dir, &["render", "d.mmd", "--by", "agent"]);
@@ -626,7 +636,7 @@ fn mmx008_w_log_appends_on_ok_and_parse_error_not_noop() {
 }
 
 #[test]
-fn mmx009_render_note_on_already_rendered_bytes_is_a_note_turn() {
+fn render_note_on_already_rendered_bytes_is_a_note_turn() {
     // serve (or a hook) renders the agent's edit first; the agent's own
     // `render --note` must still deliver the note instead of being a no-op.
     let dir = tempdir();
@@ -681,7 +691,7 @@ fn mmx009_render_note_on_already_rendered_bytes_is_a_note_turn() {
 }
 
 #[test]
-fn mmx008_w_note_is_a_turn_and_includes_unrendered_edits() {
+fn note_is_a_turn_and_includes_unrendered_edits() {
     let dir = tempdir();
     write(&dir, "d.mmd", W_A);
     ok(&dir, &["render", "d.mmd", "--by", "agent"]);
@@ -717,7 +727,35 @@ fn mmx008_w_note_is_a_turn_and_includes_unrendered_edits() {
 }
 
 #[test]
-fn mmx008_w_wait_returns_pending_human_turns_immediately() {
+fn note_repeated_on_unchanged_bytes_is_a_noop() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", W_A);
+    ok(&dir, &["render", "d.mmd"]);
+    ok(&dir, &["note", "d.mmd", "same"]);
+    let before = std::fs::read_to_string(dir.join("d.turns.jsonl")).unwrap();
+    ok(&dir, &["note", "d.mmd", "same"]);
+    assert_eq!(
+        before,
+        std::fs::read_to_string(dir.join("d.turns.jsonl")).unwrap()
+    );
+}
+
+#[test]
+fn initial_parse_error_is_a_baseline_and_pending_human_turn() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", W_BAD);
+    let out = mmx(&dir, &["render", "d.mmd", "--by", "human"]);
+    assert_eq!(out.status.code(), Some(2));
+    let diff = read_json(&dir.join("d.diff.json"));
+    assert_eq!(diff["baseline"], true);
+    assert_eq!(diff["error"]["kind"], "parse");
+    let out = mmx(&dir, &["wait", "d.mmd", "--timeout", "0"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"baseline\":true"));
+}
+
+#[test]
+fn wait_returns_pending_human_turns_immediately() {
     let dir = tempdir();
     write(&dir, "d.mmd", W_A);
     ok(&dir, &["render", "d.mmd", "--by", "agent"]);
@@ -754,7 +792,7 @@ fn mmx008_w_wait_returns_pending_human_turns_immediately() {
 }
 
 #[test]
-fn mmx008_w_wait_without_serve_renders_direct_edit_as_human() {
+fn wait_without_serve_renders_direct_edit_as_human() {
     let dir = tempdir();
     write(&dir, "d.mmd", W_A);
     ok(&dir, &["render", "d.mmd", "--by", "agent"]);
@@ -795,5 +833,35 @@ fn mmx008_w_wait_without_serve_renders_direct_edit_as_human() {
     let out = mmx(&dir, &["wait", "d.mmd", "--timeout", "1"]);
     assert_eq!(out.status.code(), Some(3), "{out:?}");
     assert_eq!(log_entries(&dir).len(), before);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn first_render_error_is_printed_for_hooks() {
+    // Hooks deliver stdout to the agent: an error turn must print even when
+    // it is also a baseline (no previous state).
+    let dir = tempdir();
+    write(&dir, "d.mmd", "flowchart TD\n A --> B[x\n");
+    let out = mmx(
+        &dir,
+        &["render", "d.mmd", "--by", "agent", "--print-if-changed"],
+    );
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let printed: Value = serde_json::from_slice(&out.stdout).expect("error diff on stdout");
+    assert_eq!(printed["baseline"], true);
+    assert_eq!(printed["error"]["line"], 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn note_retry_over_an_error_turn_still_reports_the_error() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", W_A);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    write(&dir, "d.mmd", "flowchart TD\n A --> B[x\n");
+    let first = mmx(&dir, &["note", "d.mmd", "fix?"]);
+    assert_eq!(first.status.code(), Some(2), "{first:?}");
+    let again = mmx(&dir, &["note", "d.mmd", "fix?"]);
+    assert_eq!(again.status.code(), Some(2), "{again:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

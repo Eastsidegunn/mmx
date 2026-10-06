@@ -187,6 +187,12 @@ Exit codes:
 | `1` | Anything else: I/O, usage, unsupported format. `doctor`: problems found. |
 | `3` | `mmx wait` only: timeout, nothing to report. |
 
+A human turn can be an error turn too: Mermaid that `mmx serve` receives
+from an API client (or a hand edit) is written to the `.mmd` as-is, so broken
+text becomes an exit-2 turn that `mmx wait` reports with `error` set. The
+agent fixes the syntax at that line and column and renders with `--by agent
+--note` explaining the fix.
+
 A `--note` is a message, so a non-empty note always makes a turn: if the
 bytes were already rendered (by a hook or by `mmx serve`), it becomes a
 note-only turn. Repeating the identical note on unchanged bytes is a no-op.
@@ -194,7 +200,9 @@ note-only turn. Repeating the identical note on unchanged bytes is a no-op.
 Per diagram `diagram.mmd`, mmx writes `diagram.svg`, `diagram.diff.json`,
 `diagram.state.json`, `diagram.turns.jsonl` (the turn log) and, while serving,
 `diagram.serve.json`. Agents read the diff (or the `mmx wait` output); the
-other files are mmx's own memory. Do not edit them by hand.
+other files are mmx's own memory. Do not edit them by hand. A
+`diagram.serve.json` left behind after `mmx serve` was killed is harmless:
+`wait` and `doctor` probe the URL it names instead of trusting the file.
 
 ## What it is not
 
@@ -254,6 +262,9 @@ The cockpit's editor is a dependency-free web component, `<mmx-editor>`, that
 you can embed in your own page: feed it `{svg, nodes, edges, source}` from a
 render and handle its `mmx-submit` event. A WASM build runs the full mmx turn
 (lint, render, diff, state) in the browser. Both are release assets
-(`mmx-editor.js`, `mmx_wasm.wasm`). See [`editor/README.md`](editor/README.md);
+(`mmx-editor.js`, `mmx_wasm.wasm` with its loader `mmx-wasm.js`). See
+[`editor/README.md`](editor/README.md) for the component and
+[`wasm/README.md`](wasm/README.md) for the wasm turn (API, JSON in/out, how
+it differs from the CLI);
 for a claude.ai artifact there is a ready shell in
 [`adapters/claude-artifact/`](adapters/claude-artifact/README.md).

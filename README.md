@@ -25,6 +25,7 @@ curl -LsSf https://github.com/Eastsidegunn/mmx/releases/latest/download/mmx-inst
 mmx init   # Claude Code skill; add --codex for Codex
 mmx --version   # serve, wait, note and diff v2 need 0.4.0 or newer
 ```
+If `mmx` is not found afterwards, add `~/.cargo/bin` to your PATH, then run `mmx doctor`.
 
 ## Try it
 

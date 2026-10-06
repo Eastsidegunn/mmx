@@ -167,6 +167,10 @@ fn main() -> ExitCode {
             finish_render(&job)
         }
         Command::Note { input, text, by } => {
+            let log = sibling(&input, "turns.jsonl");
+            if mmx::turnlog::repeats_last(&log, &input, &by, Some(&text)) {
+                return ExitCode::SUCCESS;
+            }
             let mut job = default_job(&input, &by, Some(text));
             job.force_turn = true;
             finish_render(&job)

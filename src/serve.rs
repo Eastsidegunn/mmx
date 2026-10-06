@@ -698,7 +698,7 @@ mod cursor_tests {
     use super::*;
 
     #[test]
-    fn mmx009_cursor_fallback_keeps_same_millisecond_turns() {
+    fn cursor_fallback_keeps_same_millisecond_turns() {
         let dir = std::env::temp_dir().join(format!("mmx-cursor-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("d.turns.jsonl");

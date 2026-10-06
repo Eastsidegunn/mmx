@@ -1,9 +1,9 @@
 flowchart TD
-    user[새 사용자] --> has{mmx 설치됨?}
-    has -->|아니오| inst[curl 한 줄 설치]
+    user[New user] --> has{mmx installed?}
+    has -->|No| inst[One-line curl install]
     inst --> init[mmx init]
-    has -->|예| init
-    init --> deploy[스킬·훅 자동 배치]
-    deploy --> talk[에이전트와 다이어그램 대화]
-    talk --> hedit[사람: 에디터로 mmd 수정]
+    has -->|Yes| init
+    init --> deploy[Install skills and hooks]
+    deploy --> talk[Talk with the agent about the diagram]
+    talk --> hedit[Human: edit the mmd in the editor]
     hedit --> talk

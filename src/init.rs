@@ -26,6 +26,10 @@ fn home_dir() -> anyhow::Result<PathBuf> {
 }
 
 fn write(path: &Path, content: &str) -> anyhow::Result<()> {
+    if std::fs::read_to_string(path).is_ok_and(|existing| existing == content) {
+        println!("  unchanged {}", path.display());
+        return Ok(());
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("cannot create {}", parent.display()))?;

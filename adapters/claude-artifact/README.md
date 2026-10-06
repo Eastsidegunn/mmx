@@ -31,5 +31,5 @@ updates live when you write `board/current` — no reload.
 The page also offers "make a link": the current edit + note encoded in a URL
 fragment (`#mmx=...`) the human can paste into the CLI conversation instead.
 
-Korean UI strings are wired in `board.html`'s `strings` object; replace them
+English UI strings are wired in `board.html`'s `strings` object; replace them
 to localize. The `--mmx-height` CSS variable controls canvas height.

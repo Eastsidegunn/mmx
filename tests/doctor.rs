@@ -6,7 +6,7 @@ use std::time::SystemTime;
 fn fixture() -> (PathBuf, PathBuf, PathBuf) {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let root = std::env::temp_dir().join(format!(
-        "mmx009-{}-{}",
+        "doctor-test-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     ));
@@ -75,7 +75,7 @@ fn setup() -> (PathBuf, PathBuf, PathBuf) {
 }
 
 #[test]
-fn mmx009_init_codex_skill_and_absolute_hooks() {
+fn init_codex_skill_and_absolute_hooks() {
     let (home, project, bin) = setup();
     assert_eq!(
         std::fs::read_to_string(home.join(".codex/skills/mmx/SKILL.md")).unwrap(),
@@ -100,7 +100,7 @@ fn mmx009_init_codex_skill_and_absolute_hooks() {
 }
 
 #[test]
-fn mmx009_init_codex_without_hooks_writes_skill() {
+fn init_codex_without_hooks_writes_skill() {
     let (home, project, bin) = fixture();
     let o = run(&home, &project, &bin, &["init", "--codex"]);
     assert!(o.status.success(), "{}", output(&o));
@@ -112,7 +112,7 @@ fn mmx009_init_codex_without_hooks_writes_skill() {
 }
 
 #[test]
-fn mmx009_doctor_healthy_and_read_only() {
+fn doctor_healthy_and_read_only() {
     let (home, project, bin) = setup();
     let before = snapshot(&project);
     let o = run(&home, &project, &bin, &["doctor", "diagram.mmd"]);
@@ -127,7 +127,7 @@ fn mmx009_doctor_healthy_and_read_only() {
 }
 
 #[test]
-fn mmx009_doctor_missing_and_stale_skills() {
+fn doctor_missing_and_stale_skills() {
     let (home, project, bin) = setup();
     let path = home.join(".codex/skills/mmx/SKILL.md");
     std::fs::remove_file(&path).unwrap();
@@ -140,13 +140,41 @@ fn mmx009_doctor_missing_and_stale_skills() {
 }
 
 #[test]
-fn mmx009_doctor_missing_hook_and_diagram() {
+fn doctor_warns_about_unused_missing_codex_skill() {
+    let (home, project, bin) = fixture();
+    let init = run(&home, &project, &bin, &["init"]);
+    assert!(init.status.success());
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    let o = run(&home, &project, &bin, &["doctor"]);
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(output(&o).contains("warn Codex skill not installed"));
+}
+
+#[test]
+fn doctor_rejects_codex_hook_runner_outside_project() {
+    let (_home, project, bin) = setup();
+    let hooks_path = project.join(".codex/hooks.json");
+    let hooks = std::fs::read_to_string(&hooks_path).unwrap();
+    let hooks = hooks.replace(
+        &project.join(".mmx/mmx_hook.py").display().to_string(),
+        "/tmp/mmx_hook.py",
+    );
+    std::fs::write(&hooks_path, hooks).unwrap();
+    let o = run(&_home, &project, &bin, &["doctor"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(output(&o).contains("FAIL Codex hook script is missing or outside the current project"));
+    assert!(output(&o).contains("fix: mmx init --codex --hooks 'diagram.mmd'"));
+}
+
+#[test]
+fn doctor_missing_hook_and_diagram() {
     let (home, project, bin) = setup();
     std::fs::remove_file(project.join(".mmx/mmx_hook.py")).unwrap();
     let o = run(&home, &project, &bin, &["doctor"]);
     assert_eq!(o.status.code(), Some(1));
-    assert!(output(&o)
-        .contains("FAIL hook script is missing\n  fix: mmx init --codex --hooks 'diagram.mmd'"));
+    assert!(output(&o).contains(
+        "FAIL Claude Code hook script is missing or outside the current project\n  fix: mmx init --codex --hooks 'diagram.mmd'"
+    ));
     std::fs::write(
         project.join(".mmx/mmx_hook.py"),
         include_str!("../adapters/mmx_hook.py"),
@@ -180,7 +208,7 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, (u64, SystemTime)> {
 }
 
 #[test]
-fn mmx009_hooks_with_spaced_diagram_path_and_rerun_is_idempotent() {
+fn hooks_with_spaced_diagram_path_and_rerun_is_idempotent() {
     let (home, project, bin) = fixture();
     std::fs::create_dir_all(project.join("my docs")).unwrap();
     std::fs::write(
