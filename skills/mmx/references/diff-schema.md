@@ -1,53 +1,63 @@
-# mmx v0 JSON reference
+# mmx diff format v2
 
-Default output names for `diagram.mmd` are `diagram.svg`, `diagram.diff.json`, and `diagram.state.json`. This is a self-contained reference to the current CLI output. The agent reads the diff; state is mmx's comparison memory.
+For `diagram.mmd`, mmx writes `diagram.svg`, `diagram.diff.json`, and `diagram.state.json`. The agent reads the diff. State is mmx's memory for the next comparison.
 
 ## diff.json
 
-Every written diff has these fields:
-
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `mmx_diff_version` | integer | Schema version, currently `1`. |
-| `format` | string | `"mermaid"` in v0. |
-| `by` | string | `--by` value, passed through; default `"unknown"`. It records the render caller, not proven edit authorship. |
+| `mmx_diff_version` | integer | `2`. |
+| `format` | string | `"mermaid"`. |
+| `by` | string | Render caller (`--by`); does not prove edit authorship. |
+| `note` | string or null | `--note` text, null when absent. |
+| `baseline` | boolean | No usable previous state. Change sections are empty. |
+| `source_changed` | boolean | Source differs from previous state. False for baseline and forced note-only turns. |
+| `kind_changed` | object or null | `{old, new}` diagram kind strings. |
+| `direction` | object or null | `{old, new}` direction strings, such as `TD` and `LR`; null when unchanged or previous direction unknown. |
+| `nodes` | object | `added`, `removed`, `changed` arrays. |
+| `edges` | object | `added`, `removed`, `changed` arrays. |
+| `subgraphs` | object | `added`, `removed`, `changed` arrays. |
+| `source_hunks` | array or null | Unified line diff hunks. Null for baseline, unchanged text, a v1 state whose source is unknown, or an encoding error whose text cannot be decoded. |
+| `source_hunks_truncated` | boolean | True if the total hunk lines were capped at 400. |
+| `moved` | array | `{id, dx, dy}` entries for relative center moves over 0.5 px. |
+| `stats` | object or null | Layout summary on success; null on error. |
+| `warnings` | string array | State recovery or diagram coverage warnings. |
+| `error` | object or null | Fixable parse/encoding error on exit 2. |
 
-| `note` | string or null | `--note` value, passed through; null when absent. Stored only in diff.json. |
-| `baseline` | boolean | True when no usable previous state exists. All semantic diff arrays are empty. |
-| `source_changed` | boolean | False on baseline; true on every written non-baseline turn, including errors and text-only changes. |
-| `kind_changed` | object or null | Diagram kind change as `{"old": string, "new": string}`, otherwise null. |
-| `nodes` | object | `added`, `removed`, and `changed` arrays, detailed below. |
-| `edges` | object | `added`, `removed`, and `changed` arrays, detailed below. |
-| `moved` | array | `{"id": string, "dx": number, "dy": number}` entries for relative center moves over 0.5 px. |
-| `stats` | object or null | Layout summary on successful render; null on error. |
-| `warnings` | string array | Usually empty. State-recovery warnings appear here. |
-| `error` | object or null | Parse/encoding error on exit 2; null otherwise. |
+`nodes.added` and `nodes.removed` contain `{id, label, shape}` objects; removed entries carry the last known label and shape. `nodes.changed` contains `{id, field, old, new}` where `field` is `label` or `shape`. An ID rename is a removal plus addition.
 
-`mmx serve` uses `by: "serve"` for its initial baseline.
+`edges.added` and `edges.removed` contain `{key, from, to, label, style}`. `label` is a string or null; `style` is `solid`, `dotted`, or `thick` (null only if removed data came from a v1 state). `edges.changed` contains `{key, field, old, new}` where `field` is `label` or `style`. Style changes are omitted when the old style is unknown. The key is `{from}->{to}#{k}`; `k` is the zero-based occurrence number among edges with the same endpoints in source order. Keys may shift after an insertion or removal.
 
-`nodes.added` and `nodes.removed` contain node ID strings. `nodes.changed` entries are `{"id": string, "field": "label" | "shape", "old": string, "new": string}`. A renamed ID is reported as remove plus add.
+`subgraphs.added` and `subgraphs.removed` contain `{id, label, nodes, direction}`. `id` and `direction` may be null, and `nodes` is an array of node IDs. Matching uses `id` when present, otherwise the label plus occurrence index (for example `Same X#1`); changing a label with no ID therefore appears as removal plus addition. `subgraphs.changed` contains `{id, field, old, new}` for `label` (strings), `nodes` (arrays), or `direction` (direction string or null); its `id` is the matching key. Subgraph changes are omitted when a v1 state has no prior subgraph data.
 
-`edges.added` and `edges.removed` contain edge-key strings, such as `"A->B#0"`. `edges.changed` entries are `{"key": string, "field": "label", "old": string | null, "new": string | null}`. The `#k` suffix is the zero-based occurrence number for the same `from`/`to` pair in source order. Key numbers can change after an insertion or removal.
+A source hunk is `{old_start, old_lines, new_start, new_lines, lines}`. Starts are one-based line numbers, or zero for an empty side; counts describe the included hunk lines on each side. Each line begins with a space (context), `-` (old), or `+` (new); a line without a final newline also has the standard `\\ No newline at end of file` marker. Hunks carry one context line on each side. The total `lines` entries are capped at 400; `source_hunks_truncated` then becomes true. Source hunks show text changes such as `classDef`, `style`, comments, and changes in diagrams whose nodes and edges are partially modeled. They can coexist with semantic changes. A CRLF/LF-only conversion has no line hunks but sets `source_changed` and warns `line endings changed (CRLF/LF)`.
 
-`stats` has `mean_move_px` and `max_move_px` (numbers), `global_shift: {"dx": number, "dy": number}`, and `nodes`/`edges` (integer counts). Movement is measured between shared node centers. `global_shift` is the component-wise median displacement; `moved` and the mean/max values use displacement after subtracting it. Derived coordinates are rounded to one decimal place.
+`stats` contains `mean_move_px`, `max_move_px`, `global_shift: {dx, dy}`, and `nodes`/`edges` counts. Movement uses shared node centers after subtracting the component-wise median shift. Derived coordinates are rounded to one decimal place. `moved` reports layout shifts; it does not prevent them.
 
-`error` has required `kind` (`"parse"` or `"encoding"`) and `message` (string). Optional `line` and `column` are one-based integers; `column` counts UTF-8 characters. Optional `candidates` is a string array, possibly empty. Unavailable optional fields are omitted, not null. The message is authoritative. On exit 2, `nodes`, `edges`, and `moved` are empty, `stats` is null, and SVG/state stay unchanged.
+`error` has required `kind` (`parse` or `encoding`) and `message`. Optional `line` and `column` are one-based; column counts characters. Optional `candidates` is a string array. Unavailable fields are omitted. On exit 2 the graph change sections are empty, `stats` is null, and SVG/state remain unchanged. A parse error may still include `source_hunks` when the previous source is known. Lint follows mermaid.js and detects missing diagram headers and unclosed flowchart shape brackets before rendering; `A[foo (bar]`, `A[a|b]`, and header-less files are lint errors even if mmdr renders them. These report exact positions. Renderer errors retain the renderer's own message and available position.
 
-State recovery adds either `"previous state corrupt; treated as baseline"` or `"previous state version unsupported; treated as baseline"` to `warnings`. The successful render backs up the old state to `<state>.corrupt`. The recovery turn is a baseline, so `--print-if-changed` prints nothing; if recovery is suspected, read `<stem>.diff.json` directly to see the warning. An error turn preserves the old state.
+A non-flowchart diagram warns `"<kind> diagram: the nodes/edges diff is partial for this diagram type; source_hunks shows every text change"`. On a baseline turn, the warning ends after `diagram type`. A flowchart with no nodes warns `"diagram has no nodes"`. State recovery warns `"previous state corrupt; treated as baseline"` or `"previous state version unsupported; treated as baseline"`; the old file is backed up as `<state>.corrupt` after a successful render.
 
 ## state.json
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `mmx_state_version` | integer | Schema version, currently `1`. |
-| `format` | string | `"mermaid"` in v0. |
-| `source_sha256` | string | Lowercase hex SHA-256 of source bytes. |
-| `kind` | string | Renderer diagram kind, for example `"Flowchart"`. |
-| `nodes` | object keyed by node ID | Each value has `label` and `shape` strings, plus numeric `x`, `y`, `w`, `h`. |
-| `edges` | array of objects | Each entry has string `key`, `from`, `to`, and string-or-null `label`. |
+| `mmx_state_version` | integer | `2`. |
+| `format` | string | `"mermaid"`. |
+| `source_sha256` | string | Lowercase SHA-256 of source bytes. |
+| `source` | string | Full committed source text. |
+| `kind` | string | Renderer diagram kind. |
+| `direction` | string | Renderer graph direction (`TD`, `LR`, `BT`, `RL`). |
+| `subgraphs` | array | `{id, label, nodes}` objects. |
+| `nodes` | object keyed by ID | `label`, `shape`, and numeric top-left `x`, `y`, size `w`, `h`. |
+| `edges` | array | `{key, from, to, label, style}` objects. |
 
-`x`/`y` are a node's top-left coordinates; `w`/`h` are its size. State coordinates retain renderer precision. Do not edit state manually.
+A v1 state loads without corruption recovery. Its missing source, direction, subgraphs, and edge styles are unknown, so mmx does not report changes against those fields on the upgrade turn. The next state is v2. Do not edit state manually.
 
 ## Write behavior
 
-A first successful render writes a baseline diff with empty change arrays, zero movement, and populated stats. A source hash match is a no-op: exit 0, no writes, and no `--by`/`--note` update. If the previous diff contains an error, mmx renders even when the source matches the last valid state, so it can clear stale error feedback. `--print-if-changed` prints the exact written diff bytes for non-baseline turns, including exit 2; baseline and no-op runs print nothing. Other failures exit 1.
+The first successful render is a baseline with empty change arrays and populated stats. Matching source hashes normally cause a no-op: exit 0 and no writes. A stale error diff causes a recovery render even if the source matches the last valid state. `--print-if-changed` prints the written diff on non-baseline turns, including exit 2; baseline and no-op runs print nothing. Other failures exit 1. `mmx serve` uses `by: "serve"` for its initial baseline.
+
+## Known limitations
+
+Sequence diagram message order is not modeled; changes appear in `source_hunks` only. Layout positions are not stable across turns: `moved` reports movement but does not prevent it.

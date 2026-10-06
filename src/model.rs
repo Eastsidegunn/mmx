@@ -30,13 +30,31 @@ pub struct EdgeInfo {
     pub from: String,
     pub to: String,
     pub label: Option<String>,
+    pub style: Option<String>,
     /// Occurrence index within the (from, to) group, in source order.
     pub k: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SubgraphInfo {
+    pub id: Option<String>,
+    pub label: String,
+    pub nodes: Vec<String>,
+    #[serde(default)]
+    pub direction: Option<String>,
+}
+
+impl SubgraphInfo {
+    pub fn key(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.label)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct GraphModel {
     pub kind: String,
+    pub direction: Option<String>,
+    pub subgraphs: Vec<SubgraphInfo>,
     pub nodes: BTreeMap<String, NodeInfo>,
     /// edge key -> info, key = "{from}->{to}#{k}"
     pub edges: BTreeMap<String, EdgeInfo>,
@@ -73,6 +91,7 @@ impl GraphModel {
                     from: e.from.clone(),
                     to: e.to.clone(),
                     label: e.label.clone(),
+                    style: Some(e.style.clone()),
                     k,
                 },
             );
@@ -80,6 +99,17 @@ impl GraphModel {
 
         GraphModel {
             kind: r.kind.clone(),
+            direction: Some(r.direction.clone()),
+            subgraphs: r
+                .subgraphs
+                .iter()
+                .map(|s| SubgraphInfo {
+                    id: s.id.clone(),
+                    label: s.label.clone(),
+                    nodes: s.nodes.clone(),
+                    direction: s.direction.clone(),
+                })
+                .collect(),
             nodes,
             edges,
         }

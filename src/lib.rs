@@ -3,9 +3,11 @@
 pub mod diff;
 pub mod emit;
 pub mod init;
+pub mod lint;
 pub mod model;
 pub mod render;
 pub mod serve;
+pub mod source_diff;
 pub mod state;
 
 use std::path::{Path, PathBuf};
@@ -123,20 +125,32 @@ pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnRes
         }
     };
 
+    if let Err(err) = lint::check(source) {
+        let mut report = emit::DiffReport::turn_error(by, note, &err, warnings);
+        report.set_source_hunks(previous_source(&prev), source);
+        return emit_turn_error(job, report);
+    }
     let rendered = match render::render_turn(source) {
         Ok(r) => r,
         Err(err) => {
-            return emit_turn_error(job, emit::DiffReport::turn_error(by, note, &err, warnings));
+            let mut report = emit::DiffReport::turn_error(by, note, &err, warnings);
+            report.set_source_hunks(previous_source(&prev), source);
+            return emit_turn_error(job, report);
         }
     };
 
     let current = model::GraphModel::from_rendered(&rendered);
-    let new_state = state::State::from_model(&source_hash, &current);
+    let new_state = state::State::from_model(&source_hash, source, &current);
 
+    let mut warnings = warnings;
+    lint::warnings(&current, !matches!(prev, Prev::Loaded(_)), &mut warnings);
     let report = match &prev {
         Prev::Loaded(p) => {
-            let d = diff::diff(&p.to_model(), &current);
-            let mut report = emit::DiffReport::from_diff(by, note, d, &current, warnings);
+            let old_model = p.to_model();
+            let d = diff::diff_with_subgraphs(&old_model, &current, p.subgraphs.is_some());
+            let mut report =
+                emit::DiffReport::from_diff(by, note, d, &old_model, &current, warnings);
+            report.set_source_hunks(p.source.as_deref(), source);
             // A forced turn over identical bytes (note-only) must not claim a
             // text change the agent would then hunt for in the blind spots.
             report.source_changed = p.source_sha256 != source_hash;
@@ -168,6 +182,13 @@ pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnRes
         outcome: TurnOutcome::Ok,
         print: (job.print_if_changed && report.is_printable()).then_some(diff_json),
     })
+}
+
+fn previous_source(prev: &Prev) -> Option<&str> {
+    match prev {
+        Prev::Loaded(s) => s.source.as_deref(),
+        _ => None,
+    }
 }
 
 fn emit_turn_error(job: &RenderJob, report: emit::DiffReport) -> anyhow::Result<TurnResult> {

@@ -33,14 +33,20 @@ When hooks are installed, notes for Edit/Write edits are not recorded because th
 
 ## Read and respond
 
-- `baseline: true` means no usable previous state. Diff sections are intentionally empty, while `stats` describes the first render.
-- `source_changed: true` means the text changed even when `nodes` and `edges` are empty. Styles, arrow forms, subgraphs, direction, and comments can fall outside the semantic diff.
-- `nodes` and `edges` report added, removed, and changed IDs/keys. A node ID rename appears as removal plus addition. `kind_changed` reports a diagram-type change.
-- `moved` reports relative node-center movement after subtracting `stats.global_shift`. `stats.mean_move_px` and `max_move_px` measure the remaining layout movement; mmx reports shifts but does not prevent them.
-- `by` says who invoked the render, not a proven author of every edit.
-- A turn can carry **no graph changes at all** — empty `nodes`/`edges` with a non-empty `note`. That is the human asking a question or leaving a comment through `mmx serve`; respond to the note (edit the diagram or answer with your own `--note`), don't dismiss it as a no-op.
+- `baseline: true` means no usable previous state. Change sections are empty; `stats` describes the first render.
+- Added and removed nodes include their IDs, labels, and shapes. Added and removed edges include keys, endpoints, labels, and styles. Read these entries directly to understand the change; an ID rename appears as removal plus addition.
+- `edges.changed` reports labels and solid/dotted/thick style changes. `direction` reports graph direction changes. `subgraphs` reports additions, removals, labels, membership, and direction changes.
+- Read `source_hunks` for `classDef`, `style`, comments, and other source details. This is especially important when a non-flowchart warning says node/edge coverage is limited. `source_hunks: null` means there is no known previous source or the text is unchanged; `source_hunks_truncated: true` means only the first 400 hunk lines are present.
+- `moved` reports relative node-center movement after subtracting `stats.global_shift`. The mean and max values measure remaining layout movement; mmx reports shifts but does not prevent them.
+- `warnings` can flag a non-flowchart diagram, an empty flowchart, or recovery from corrupt/unsupported state. Treat non-flowchart changes through `source_hunks`.
+- Quote labels containing brackets or pipes: `A["foo (bar"]`.
+- `by` identifies the render caller, not proven edit authorship. A turn can carry no graph change and still contain a human `note`; respond to the note (edit the diagram or answer with your own `--note`).
 
 See [diff-schema.md](references/diff-schema.md) for all diff and state fields.
+
+### Known limitations
+
+Sequence diagram message order is not modeled; changes are visible through `source_hunks` only. Layout positions are not stable across turns; `moved` reports movement but does not prevent it.
 
 ## Showing the diagram (one renderer, one picture)
 

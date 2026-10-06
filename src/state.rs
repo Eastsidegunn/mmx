@@ -8,9 +8,9 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::model::{edge_key_index, EdgeInfo, GraphModel, NodeInfo};
+use crate::model::{edge_key_index, EdgeInfo, GraphModel, NodeInfo, SubgraphInfo};
 
-pub const STATE_VERSION: u32 = 1;
+pub const STATE_VERSION: u32 = 2;
 
 pub const WARN_CORRUPT: &str = "previous state corrupt; treated as baseline";
 pub const WARN_VERSION: &str = "previous state version unsupported; treated as baseline";
@@ -21,6 +21,12 @@ pub struct State {
     pub format: String,
     pub source_sha256: String,
     pub kind: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub direction: Option<String>,
+    #[serde(default)]
+    pub subgraphs: Option<Vec<SubgraphInfo>>,
     pub nodes: BTreeMap<String, StateNode>,
     pub edges: Vec<StateEdge>,
 }
@@ -42,6 +48,8 @@ pub struct StateEdge {
     pub from: String,
     pub to: String,
     pub label: Option<String>,
+    #[serde(default)]
+    pub style: Option<String>,
 }
 
 /// Result of reading a previous state file that exists.
@@ -53,7 +61,7 @@ pub enum Loaded {
 }
 
 impl State {
-    pub fn from_model(source_sha256: &str, model: &GraphModel) -> Self {
+    pub fn from_model(source_sha256: &str, source: &str, model: &GraphModel) -> Self {
         let nodes = model
             .nodes
             .iter()
@@ -79,6 +87,7 @@ impl State {
                 from: e.from.clone(),
                 to: e.to.clone(),
                 label: e.label.clone(),
+                style: e.style.clone(),
             })
             .collect();
         State {
@@ -86,6 +95,9 @@ impl State {
             format: "mermaid".into(),
             source_sha256: source_sha256.into(),
             kind: model.kind.clone(),
+            source: Some(source.into()),
+            direction: model.direction.clone(),
+            subgraphs: Some(model.subgraphs.clone()),
             nodes,
             edges,
         }
@@ -119,6 +131,7 @@ impl State {
                         from: e.from.clone(),
                         to: e.to.clone(),
                         label: e.label.clone(),
+                        style: e.style.clone(),
                         k: edge_key_index(&e.key).unwrap_or(0),
                     },
                 )
@@ -126,6 +139,8 @@ impl State {
             .collect();
         GraphModel {
             kind: self.kind.clone(),
+            direction: self.direction.clone(),
+            subgraphs: self.subgraphs.clone().unwrap_or_default(),
             nodes,
             edges,
         }
@@ -140,7 +155,7 @@ impl State {
             Err(_) => return Ok(Loaded::Corrupt(WARN_CORRUPT)),
         };
         match value.get("mmx_state_version").and_then(|v| v.as_u64()) {
-            Some(v) if v == STATE_VERSION as u64 => {}
+            Some(v) if v == STATE_VERSION as u64 || v == 1 => {}
             Some(_) => return Ok(Loaded::Corrupt(WARN_VERSION)),
             None => return Ok(Loaded::Corrupt(WARN_CORRUPT)),
         }

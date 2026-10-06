@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::model::{EdgeInfo, GraphModel};
+use crate::model::{EdgeInfo, GraphModel, SubgraphInfo};
 
 /// One attribute change. `anchor` is the node id (nodes) or the edge key
 /// (edges); emit.rs names it `id` / `key` respectively.
@@ -11,6 +11,13 @@ pub struct FieldChange {
     pub field: &'static str,
     pub old: Option<String>,
     pub new: Option<String>,
+}
+
+pub struct SubgraphFieldChange {
+    pub id: String,
+    pub field: &'static str,
+    pub old: serde_json::Value,
+    pub new: serde_json::Value,
 }
 
 pub struct Moved {
@@ -22,6 +29,10 @@ pub struct Moved {
 #[derive(Default)]
 pub struct Diff {
     pub kind_changed: Option<(String, String)>,
+    pub direction: Option<(String, String)>,
+    pub subgraphs_added: Vec<SubgraphInfo>,
+    pub subgraphs_removed: Vec<SubgraphInfo>,
+    pub subgraphs_changed: Vec<SubgraphFieldChange>,
     pub nodes_added: Vec<String>,
     pub nodes_removed: Vec<String>,
     pub nodes_changed: Vec<FieldChange>,
@@ -40,6 +51,10 @@ impl Diff {
     /// No semantic or positional change (kind change counts as semantic).
     pub fn is_empty(&self) -> bool {
         self.kind_changed.is_none()
+            && self.direction.is_none()
+            && self.subgraphs_added.is_empty()
+            && self.subgraphs_removed.is_empty()
+            && self.subgraphs_changed.is_empty()
             && self.nodes_added.is_empty()
             && self.nodes_removed.is_empty()
             && self.nodes_changed.is_empty()
@@ -54,16 +69,86 @@ impl Diff {
 const MOVE_THRESHOLD_PX: f32 = 0.5;
 
 pub fn diff(prev: &GraphModel, cur: &GraphModel) -> Diff {
+    diff_with_subgraphs(prev, cur, true)
+}
+
+pub fn diff_with_subgraphs(prev: &GraphModel, cur: &GraphModel, known: bool) -> Diff {
     let mut d = Diff::default();
 
     if prev.kind != cur.kind {
         d.kind_changed = Some((prev.kind.clone(), cur.kind.clone()));
     }
 
+    if let (Some(old), Some(new)) = (&prev.direction, &cur.direction) {
+        if old != new {
+            d.direction = Some((old.clone(), new.clone()));
+        }
+    }
+    // A v1 model has unknown subgraphs, represented by the caller below.
+    if known {
+        diff_subgraphs(prev, cur, &mut d);
+    }
     diff_nodes(prev, cur, &mut d);
     diff_edges(prev, cur, &mut d);
     diff_positions(prev, cur, &mut d);
     d
+}
+
+fn diff_subgraphs(prev: &GraphModel, cur: &GraphModel, d: &mut Diff) {
+    fn keyed(items: &[SubgraphInfo]) -> BTreeMap<String, &SubgraphInfo> {
+        let mut counts = BTreeMap::<&str, usize>::new();
+        items
+            .iter()
+            .map(|s| {
+                let key = if let Some(id) = &s.id {
+                    id.clone()
+                } else {
+                    let n = counts.entry(&s.label).or_default();
+                    *n += 1;
+                    format!("{}#{n}", s.label)
+                };
+                (key, s)
+            })
+            .collect()
+    }
+    let old = keyed(&prev.subgraphs);
+    let new = keyed(&cur.subgraphs);
+    for (key, s) in &new {
+        match old.get(key) {
+            None => d.subgraphs_added.push((*s).clone()),
+            Some(p) => {
+                if p.label != s.label {
+                    d.subgraphs_changed.push(SubgraphFieldChange {
+                        id: key.clone(),
+                        field: "label",
+                        old: serde_json::json!(p.label),
+                        new: serde_json::json!(s.label),
+                    });
+                }
+                if p.nodes != s.nodes {
+                    d.subgraphs_changed.push(SubgraphFieldChange {
+                        id: key.clone(),
+                        field: "nodes",
+                        old: serde_json::json!(p.nodes),
+                        new: serde_json::json!(s.nodes),
+                    });
+                }
+                if p.direction != s.direction {
+                    d.subgraphs_changed.push(SubgraphFieldChange {
+                        id: key.clone(),
+                        field: "direction",
+                        old: serde_json::json!(p.direction),
+                        new: serde_json::json!(s.direction),
+                    });
+                }
+            }
+        }
+    }
+    for (key, s) in old {
+        if !new.contains_key(&key) {
+            d.subgraphs_removed.push(s.clone());
+        }
+    }
 }
 
 fn diff_nodes(prev: &GraphModel, cur: &GraphModel, d: &mut Diff) {
@@ -114,8 +199,8 @@ fn group_edges(m: &GraphModel) -> BTreeMap<(&str, &str), EdgeGroup<'_>> {
     groups
 }
 
-/// Within each (from, to) group: pair edges with equal labels first, then
-/// pair the leftovers in source order. Unpaired prev edges are removed
+/// Within each (from, to) group: pair equal label/style first, then equal
+/// labels, then leftovers in source order. Unpaired prev edges are removed
 /// (reported under their prev key), unpaired current edges are added and
 /// paired edges with differing labels are changed (both under current keys).
 fn diff_edges(prev: &GraphModel, cur: &GraphModel, d: &mut Diff) {
@@ -135,14 +220,26 @@ fn diff_edges(prev: &GraphModel, cur: &GraphModel, d: &mut Diff) {
         let mut p_used = vec![false; p.len()];
         let mut c_match: Vec<Option<usize>> = vec![None; c.len()];
 
-        // Phase 1: identical labels.
+        // Phase 1: identical labels and styles.
         for (ci, (_, ce)) in c.iter().enumerate() {
-            if let Some(pi) = (0..p.len()).find(|&pi| !p_used[pi] && p[pi].1.label == ce.label) {
+            if let Some(pi) = (0..p.len())
+                .find(|&pi| !p_used[pi] && p[pi].1.label == ce.label && p[pi].1.style == ce.style)
+            {
                 p_used[pi] = true;
                 c_match[ci] = Some(pi);
             }
         }
-        // Phase 2: leftovers in source order.
+        // Phase 2: equal labels, allowing genuine style changes.
+        for (ci, (_, ce)) in c.iter().enumerate() {
+            if c_match[ci].is_none() {
+                if let Some(pi) = (0..p.len()).find(|&pi| !p_used[pi] && p[pi].1.label == ce.label)
+                {
+                    p_used[pi] = true;
+                    c_match[ci] = Some(pi);
+                }
+            }
+        }
+        // Phase 3: leftovers in source order.
         let mut free_p = (0..p.len())
             .filter(|&pi| !p_used[pi])
             .collect::<Vec<_>>()
@@ -159,6 +256,16 @@ fn diff_edges(prev: &GraphModel, cur: &GraphModel, d: &mut Diff) {
                 None => d.edges_added.push((*ckey).clone()),
                 Some(pi) => {
                     let pe = p[pi].1;
+                    if let (Some(old), Some(new)) = (&pe.style, &ce.style) {
+                        if old != new {
+                            d.edges_changed.push(FieldChange {
+                                anchor: (*ckey).clone(),
+                                field: "style",
+                                old: Some(old.clone()),
+                                new: Some(new.clone()),
+                            });
+                        }
+                    }
                     if pe.label != ce.label {
                         d.edges_changed.push(FieldChange {
                             anchor: (*ckey).clone(),
@@ -272,6 +379,7 @@ mod tests {
                 from: from.into(),
                 to: to.into(),
                 label: label.map(Into::into),
+                style: Some("solid".into()),
                 k,
             },
         )

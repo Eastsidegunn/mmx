@@ -12,10 +12,19 @@ use mermaid_rs_renderer::{
 pub struct RenderedTurn {
     pub svg: String,
     pub kind: String,
+    pub direction: String,
+    pub subgraphs: Vec<RenderedSubgraph>,
     /// node id -> label, shape, top-left position and size
     pub nodes: BTreeMap<String, RenderedNode>,
     /// edges in source order
     pub edges: Vec<RenderedEdge>,
+}
+
+pub struct RenderedSubgraph {
+    pub id: Option<String>,
+    pub label: String,
+    pub nodes: Vec<String>,
+    pub direction: Option<String>,
 }
 
 pub struct RenderedNode {
@@ -32,6 +41,7 @@ pub struct RenderedEdge {
     pub from: String,
     pub to: String,
     pub label: Option<String>,
+    pub style: String,
 }
 
 /// Structured turn failure the agent can fix by editing the diagram,
@@ -80,12 +90,39 @@ pub fn render_turn(source: &str) -> Result<RenderedTurn, TurnError> {
             from: e.from.clone(),
             to: e.to.clone(),
             label: e.label.clone(),
+            style: format!("{:?}", e.style).to_ascii_lowercase(),
         })
         .collect();
 
     Ok(RenderedTurn {
         svg,
         kind: format!("{:?}", parsed.graph.kind),
+        direction: match parsed.graph.direction {
+            mermaid_rs_renderer::ir::Direction::TopDown => "TD",
+            mermaid_rs_renderer::ir::Direction::LeftRight => "LR",
+            mermaid_rs_renderer::ir::Direction::BottomTop => "BT",
+            mermaid_rs_renderer::ir::Direction::RightLeft => "RL",
+        }
+        .into(),
+        subgraphs: parsed
+            .graph
+            .subgraphs
+            .iter()
+            .map(|s| RenderedSubgraph {
+                id: s.id.clone(),
+                label: s.label.clone(),
+                nodes: s.nodes.clone(),
+                direction: s.direction.map(|d| {
+                    match d {
+                        mermaid_rs_renderer::ir::Direction::TopDown => "TD",
+                        mermaid_rs_renderer::ir::Direction::LeftRight => "LR",
+                        mermaid_rs_renderer::ir::Direction::BottomTop => "BT",
+                        mermaid_rs_renderer::ir::Direction::RightLeft => "RL",
+                    }
+                    .to_string()
+                }),
+            })
+            .collect(),
         nodes,
         edges,
     })

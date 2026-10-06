@@ -193,7 +193,10 @@ fn mmx002_t3_human_turn_writes_diff_and_state() {
     assert_eq!(result["exit"], 0);
     assert!(result["svg"].as_str().unwrap().contains("<svg"));
     assert!(result["state"].get("svg").is_none());
-    assert_eq!(result["diff"]["nodes"]["added"], json!(["C"]));
+    assert_eq!(
+        result["diff"]["nodes"]["added"],
+        json!([{"id":"C","label":"C","shape":"Rectangle"}])
+    );
     assert_eq!(std::fs::read_to_string(s.dir.join("d.mmd")).unwrap(), B);
     let diff = file_json(&s.dir, "d.diff.json");
     assert_eq!(diff["by"], "human");

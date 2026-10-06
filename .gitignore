@@ -4,3 +4,4 @@ target/
 examples/*.svg
 examples/*.diff.json
 examples/*.state.json
+.claude/

@@ -10,7 +10,7 @@
 use std::alloc::{alloc, Layout};
 use std::cell::RefCell;
 
-use mmx::{diff, emit, model, render, state};
+use mmx::{diff, emit, lint, model, render, state};
 
 thread_local! {
     static LAST: RefCell<String> = const { RefCell::new(String::new()) };
@@ -63,23 +63,30 @@ fn run(input: &[u8]) -> Result<String, String> {
         }
     }
 
-    let rendered = match render::render_turn(source) {
+    let rendered = match lint::check(source).and_then(|_| render::render_turn(source)) {
         Ok(r) => r,
         Err(err) => {
-            let report = emit::DiffReport::turn_error(by, note, &err, Vec::new());
+            let mut report = emit::DiffReport::turn_error(by, note, &err, Vec::new());
+            report.set_source_hunks(prev.as_ref().and_then(|p| p.source.as_deref()), source);
             let diff_json = report.to_json().map_err(|e| e.to_string())?;
             return Ok(format!("{{\"exit\":2,\"diff\":{diff_json}}}"));
         }
     };
 
     let current = model::GraphModel::from_rendered(&rendered);
-    let new_state = state::State::from_model(&source_hash, &current);
+    let new_state = state::State::from_model(&source_hash, source, &current);
+    let mut warnings = Vec::new();
+    lint::warnings(&current, prev.is_none(), &mut warnings);
     let report = match &prev {
         Some(p) => {
-            let d = diff::diff(&p.to_model(), &current);
-            emit::DiffReport::from_diff(by, note, d, &current, Vec::new())
+            let old_model = p.to_model();
+            let d = diff::diff_with_subgraphs(&old_model, &current, p.subgraphs.is_some());
+            let mut report =
+                emit::DiffReport::from_diff(by, note, d, &old_model, &current, warnings);
+            report.set_source_hunks(p.source.as_deref(), source);
+            report
         }
-        None => emit::DiffReport::baseline(by, note, &current, Vec::new()),
+        None => emit::DiffReport::baseline(by, note, &current, warnings),
     };
 
     let diff_json = report.to_json().map_err(|e| e.to_string())?;

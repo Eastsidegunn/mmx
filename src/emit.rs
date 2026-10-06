@@ -7,10 +7,10 @@ use anyhow::Context;
 use serde::Serialize;
 
 use crate::diff::{Diff, FieldChange};
-use crate::model::GraphModel;
+use crate::model::{GraphModel, SubgraphInfo};
 use crate::render::TurnError;
 
-pub const DIFF_VERSION: u32 = 1;
+pub const DIFF_VERSION: u32 = 2;
 
 #[derive(Serialize)]
 pub struct DiffReport {
@@ -24,6 +24,10 @@ pub struct DiffReport {
     /// (e.g. only arrow/style/classDef/subgraph edits).
     pub source_changed: bool,
     pub kind_changed: Option<KindChange>,
+    pub direction: Option<KindChange>,
+    pub subgraphs: SubgraphDiffSection,
+    pub source_hunks: Option<Vec<crate::source_diff::SourceHunk>>,
+    pub source_hunks_truncated: bool,
     pub nodes: NodeDiffSection,
     pub edges: EdgeDiffSection,
     pub moved: Vec<MovedEntry>,
@@ -41,16 +45,47 @@ pub struct KindChange {
 
 #[derive(Serialize, Default)]
 pub struct NodeDiffSection {
-    pub added: Vec<String>,
-    pub removed: Vec<String>,
+    pub added: Vec<NodeEntry>,
+    pub removed: Vec<NodeEntry>,
     pub changed: Vec<NodeChange>,
 }
 
 #[derive(Serialize, Default)]
 pub struct EdgeDiffSection {
-    pub added: Vec<String>,
-    pub removed: Vec<String>,
+    pub added: Vec<EdgeEntry>,
+    pub removed: Vec<EdgeEntry>,
     pub changed: Vec<EdgeChange>,
+}
+
+#[derive(Serialize)]
+pub struct NodeEntry {
+    pub id: String,
+    pub label: String,
+    pub shape: String,
+}
+
+#[derive(Serialize)]
+pub struct EdgeEntry {
+    pub key: String,
+    pub from: String,
+    pub to: String,
+    pub label: Option<String>,
+    pub style: Option<String>,
+}
+
+#[derive(Serialize, Default)]
+pub struct SubgraphDiffSection {
+    pub added: Vec<SubgraphInfo>,
+    pub removed: Vec<SubgraphInfo>,
+    pub changed: Vec<SubgraphChange>,
+}
+
+#[derive(Serialize)]
+pub struct SubgraphChange {
+    pub id: String,
+    pub field: String,
+    pub old: serde_json::Value,
+    pub new: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -113,6 +148,10 @@ impl DiffReport {
             baseline: false,
             source_changed: false,
             kind_changed: None,
+            direction: None,
+            subgraphs: SubgraphDiffSection::default(),
+            source_hunks: None,
+            source_hunks_truncated: false,
             nodes: NodeDiffSection::default(),
             edges: EdgeDiffSection::default(),
             moved: Vec::new(),
@@ -126,20 +165,52 @@ impl DiffReport {
         by: &str,
         note: Option<&str>,
         d: Diff,
+        previous: &GraphModel,
         current: &GraphModel,
         warnings: Vec<String>,
     ) -> Self {
         DiffReport {
             source_changed: true,
             kind_changed: d.kind_changed.map(|(old, new)| KindChange { old, new }),
+            direction: d.direction.map(|(old, new)| KindChange { old, new }),
+            subgraphs: SubgraphDiffSection {
+                added: d.subgraphs_added,
+                removed: d.subgraphs_removed,
+                changed: d
+                    .subgraphs_changed
+                    .into_iter()
+                    .map(|c| SubgraphChange {
+                        id: c.id,
+                        field: c.field.into(),
+                        old: c.old,
+                        new: c.new,
+                    })
+                    .collect(),
+            },
             nodes: NodeDiffSection {
-                added: d.nodes_added,
-                removed: d.nodes_removed,
+                added: d
+                    .nodes_added
+                    .into_iter()
+                    .map(|id| node_entry(&id, current))
+                    .collect(),
+                removed: d
+                    .nodes_removed
+                    .into_iter()
+                    .map(|id| node_entry(&id, previous))
+                    .collect(),
                 changed: d.nodes_changed.into_iter().map(node_change).collect(),
             },
             edges: EdgeDiffSection {
-                added: d.edges_added,
-                removed: d.edges_removed,
+                added: d
+                    .edges_added
+                    .into_iter()
+                    .map(|key| edge_entry(&key, current))
+                    .collect(),
+                removed: d
+                    .edges_removed
+                    .into_iter()
+                    .map(|key| edge_entry(&key, previous))
+                    .collect(),
                 changed: d.edges_changed.into_iter().map(edge_change).collect(),
             },
             moved: d
@@ -215,6 +286,11 @@ impl DiffReport {
     pub fn is_semantically_empty(&self) -> bool {
         self.error.is_none()
             && self.kind_changed.is_none()
+            && self.direction.is_none()
+            && self.subgraphs.added.is_empty()
+            && self.subgraphs.removed.is_empty()
+            && self.subgraphs.changed.is_empty()
+            && self.source_hunks.as_ref().is_none_or(Vec::is_empty)
             && self.nodes.added.is_empty()
             && self.nodes.removed.is_empty()
             && self.nodes.changed.is_empty()
@@ -224,8 +300,40 @@ impl DiffReport {
             && self.moved.is_empty()
     }
 
+    pub fn set_source_hunks(&mut self, previous: Option<&str>, current: &str) {
+        if let Some(old) = previous.filter(|old| *old != current) {
+            let (hunks, truncated) = crate::source_diff::hunks(old, current);
+            self.source_hunks = Some(hunks);
+            self.source_hunks_truncated = truncated;
+            if self.source_hunks.as_ref().is_some_and(Vec::is_empty)
+                && old.replace("\r\n", "\n") == current.replace("\r\n", "\n")
+            {
+                self.warnings.push("line endings changed (CRLF/LF)".into());
+            }
+        }
+    }
+
     pub fn to_json(&self) -> anyhow::Result<String> {
         to_json(self)
+    }
+}
+
+fn node_entry(id: &str, model: &GraphModel) -> NodeEntry {
+    let n = &model.nodes[id];
+    NodeEntry {
+        id: id.into(),
+        label: n.label.clone(),
+        shape: n.shape.clone(),
+    }
+}
+fn edge_entry(key: &str, model: &GraphModel) -> EdgeEntry {
+    let e = &model.edges[key];
+    EdgeEntry {
+        key: key.into(),
+        from: e.from.clone(),
+        to: e.to.clone(),
+        label: e.label.clone(),
+        style: e.style.clone(),
     }
 }
 
@@ -252,11 +360,18 @@ pub fn to_json<T: Serialize>(value: &T) -> anyhow::Result<String> {
     Ok(serde_json::to_string_pretty(value)? + "\n")
 }
 
-/// Atomic replace: write `<path>.tmp`, then rename over `<path>`. A reader
+/// Atomic replace: write `<path>.<pid>.<n>.tmp`, then rename over `<path>`. A reader
 /// never observes a half-written file.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    // Unique per writer: two processes (an agent's `mmx note` and `mmx serve`,
+    // say) writing the same output must not rename each other's temp file.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut tmp_name = path.as_os_str().to_owned();
-    tmp_name.push(".tmp");
+    tmp_name.push(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let tmp = PathBuf::from(tmp_name);
     std::fs::write(&tmp, bytes).with_context(|| format!("cannot write {}", tmp.display()))?;
     std::fs::rename(&tmp, path).with_context(|| {

@@ -84,8 +84,14 @@ fn two_turn_conversation() {
     assert_eq!(diff["kind_changed"], Value::Null);
     assert_eq!(diff["by"], "human");
     assert_eq!(diff["note"], "반려 경로 추가");
-    assert_eq!(diff["nodes"]["added"], json!(["G"]));
-    assert_eq!(diff["edges"]["added"], json!(["B->G#0"]));
+    assert_eq!(
+        diff["nodes"]["added"],
+        json!([{"id":"G","label":"반려","shape":"Rectangle"}])
+    );
+    assert_eq!(
+        diff["edges"]["added"],
+        json!([{"key":"B->G#0","from":"B","to":"G","label":null,"style":"solid"}])
+    );
     let changed = diff["nodes"]["changed"].as_array().unwrap();
     assert_eq!(changed.len(), 1);
     assert_eq!(changed[0]["id"], "A");
@@ -182,7 +188,10 @@ fn deleting_first_parallel_edge_is_a_removal_not_a_relabel() {
     assert!(mmx(&dir, &["render", "d.mmd"]).status.success());
 
     let diff = read_json(&dir.join("d.diff.json"));
-    assert_eq!(diff["edges"]["removed"], json!(["A->B#0"]));
+    assert_eq!(
+        diff["edges"]["removed"],
+        json!([{"key":"A->B#0","from":"A","to":"B","label":"x","style":"solid"}])
+    );
     assert_eq!(diff["edges"]["added"], json!([]));
     assert_eq!(diff["edges"]["changed"], json!([]));
 }
@@ -202,7 +211,10 @@ fn global_shift_is_not_reported_as_movement() {
     assert!(mmx(&dir, &["render", "d.mmd"]).status.success());
 
     let diff = read_json(&dir.join("d.diff.json"));
-    assert_eq!(diff["nodes"]["added"], json!(["Z"]));
+    assert_eq!(
+        diff["nodes"]["added"],
+        json!([{"id":"Z","label":"Z","shape":"Rectangle"}])
+    );
     assert_eq!(diff["moved"], json!([]), "{diff:#}");
     assert_eq!(diff["stats"]["max_move_px"], 0.0);
     assert!(diff["stats"]["global_shift"]["dx"].as_f64().unwrap() > 10.0);
@@ -261,7 +273,7 @@ fn corrupt_state_is_backed_up_and_treated_as_baseline() {
         std::fs::read_to_string(dir.join("d.state.json.corrupt")).unwrap(),
         "{ not json"
     );
-    assert_eq!(read_json(&dir.join("d.state.json"))["mmx_state_version"], 1);
+    assert_eq!(read_json(&dir.join("d.state.json"))["mmx_state_version"], 2);
 
     // Version mismatch takes the same recovery path.
     let mut state = read_json(&dir.join("d.state.json"));
@@ -302,7 +314,10 @@ fn state_out_is_also_the_default_prev() {
     assert!(mmx(&dir, &args).status.success());
     let diff = read_json(&dir.join("d.diff.json"));
     assert_eq!(diff["baseline"], false);
-    assert_eq!(diff["nodes"]["added"], json!(["C"]));
+    assert_eq!(
+        diff["nodes"]["added"],
+        json!([{"id":"C","label":"C","shape":"Rectangle"}])
+    );
 }
 
 /// A12: outputs may not clobber the input (or each other).
