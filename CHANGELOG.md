@@ -2,7 +2,12 @@
 
 All notable changes to mmx are documented here. This follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.2] - Unreleased
+## [0.4.2] - 2026-10-08
+
+### Added
+
+- `pi-mmx` (`adapters/pi`), an extension for the pi coding agent: tools `mmx_render` and `mmx_wait`, `/mmx open|stop|status`, validation of `.mmd` edits, and delivery of the human's cockpit edits to pi as the next turn (with a loop guard). Install with `pi install npm:pi-mmx` once published, or `pi install ./adapters/pi` from a clone.
+- `adapters/tiro`: an agent skill that turns a finished Tiro meeting note into picture minutes the human corrects in the cockpit (draft, with a synthetic example).
 
 ### Fixed
 
@@ -76,6 +81,7 @@ All notable changes to mmx are documented here. This follows [Keep a Changelog](
 - Initial `mmx render` workflow: render Mermaid to SVG, emit a per-turn `diff.json` and comparison `state.json`, and report parse or encoding errors with exit status 2.
 - Agent skill, installation guide, hook examples, and sample diagrams.
 
+[0.4.2]: https://github.com/Eastsidegunn/mmx/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Eastsidegunn/mmx/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Eastsidegunn/mmx/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Eastsidegunn/mmx/compare/v0.2.0...v0.3.0

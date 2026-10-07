@@ -1,6 +1,6 @@
 [package]
 name = "mmx"
-version = "0.4.2-dev"
+version = "0.4.2"
 edition = "2021"
 description = "Edit an AI agent's Mermaid diagram on the picture; the agent sees exactly what you changed"
 license = "MIT"
