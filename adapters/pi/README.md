@@ -1,23 +1,27 @@
 # pi-mmx
 
-`pi-mmx` connects the local [mmx](../../) Mermaid picture-editing cockpit to
-the [pi coding agent](https://pi.dev/). It gives the model `mmx_render` and
-`mmx_wait`, opens/stops the browser cockpit with `/mmx open`, `/mmx stop`, and
-`/mmx status`, validates edits made by pi's built-in `edit` and `write` tools,
-and turns new human entries in `*.turns.jsonl` into `mmx-turn` messages.
-
-Pi loads this package's TypeScript directly through `jiti`; pi's extension
-docs say, “Extensions are loaded via jiti, so TypeScript works without
-compilation.” Install from a clone with:
+Sketch with [pi](https://pi.dev/) in the same Mermaid diagram: you edit the
+picture in the [mmx](https://github.com/Eastsidegunn/mmx) cockpit (rename,
+connect, delete, add a note), pi sees exactly what you changed and answers by
+editing the diagram.
 
 ```sh
-pi install ./adapters/pi
+pi install npm:pi-mmx
 ```
 
-Once published, the package can be installed with `pi install npm:pi-mmx`.
+Then in pi: ask for a diagram (*"sketch our deploy flow as flow.mmd"*), run
+`/mmx open` to edit it in the browser, and press Send — your change arrives in
+pi as the next turn.
+
+What it adds: tools `mmx_render` and `mmx_wait`; commands `/mmx open`,
+`/mmx stop`, `/mmx status`; validation of `.mmd` edits made by pi's built-in
+`edit`/`write` tools; and delivery of your cockpit edits (new human entries in
+`*.turns.jsonl`) to the model as `mmx-turn` messages. pi loads the TypeScript
+directly (no build step). From a clone of the mmx repository you can also run
+`pi install ./adapters/pi`.
+
 The package also declares the same entry under `omp.extensions` for
-oh-my-pi. omp support is manifest-only here and is untested because omp is not
-installed in this repository's environment.
+oh-my-pi; omp support is manifest-only and untested.
 
 Requirements:
 
@@ -25,7 +29,7 @@ Requirements:
 - pi 0.82 or newer, with the usual `typebox` peer supplied by pi
 
 If mmx is missing or too old, install it using the mmx repository's
-[`INSTALL.md`](../../INSTALL.md); the extension keeps built-in tools usable and
+[`INSTALL.md`](https://github.com/Eastsidegunn/mmx/blob/main/INSTALL.md); the extension keeps built-in tools usable and
 re-checks availability when an mmx feature is used.
 
 The short pi skill in `skills/mmx-pi/SKILL.md` teaches the render/note loop. For

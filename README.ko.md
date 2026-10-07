@@ -1,5 +1,5 @@
 [English](README.md) · 한국어 · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
-> 이 문서는 영어 원문 [README.md](README.md)의 번역입니다 (기준: 67906d8). 원문이 더 최신일 수 있습니다.
+> 이 문서는 영어 원문 [README.md](README.md)의 번역입니다 (기준: 8d9f4b0). 원문이 더 최신일 수 있습니다.
 
 **AI agent? Read [AGENTS.md](AGENTS.md) first.**
 

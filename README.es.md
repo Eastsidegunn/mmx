@@ -1,5 +1,5 @@
 [English](README.md) · [한국어](README.ko.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · Español
-> Esta es una traducción del [README.md](README.md) original en inglés (base: 67906d8). Puede que el original esté más actualizado.
+> Esta es una traducción del [README.md](README.md) original en inglés (base: 8d9f4b0). Puede que el original esté más actualizado.
 
 **AI agent? Read [AGENTS.md](AGENTS.md) first.**
 

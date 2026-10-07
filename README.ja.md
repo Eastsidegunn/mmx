@@ -1,5 +1,5 @@
 [English](README.md) · [한국어](README.ko.md) · [简体中文](README.zh-CN.md) · 日本語 · [Español](README.es.md)
-> この文書は英語版 [README.md](README.md) の翻訳です（基準: 67906d8）。英語版のほうが新しい場合があります。
+> この文書は英語版 [README.md](README.md) の翻訳です（基準: 8d9f4b0）。英語版のほうが新しい場合があります。
 
 **AI agent? Read [AGENTS.md](AGENTS.md) first.**
 

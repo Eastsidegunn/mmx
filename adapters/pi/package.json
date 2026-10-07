@@ -1,16 +1,44 @@
 {
   "name": "pi-mmx",
   "version": "0.1.0",
-  "description": "mmx Mermaid diagram cockpit integration for pi coding-agent",
+  "description": "Sketch with pi in the same Mermaid diagram: you edit the picture in the mmx cockpit, pi sees exactly what you changed and answers in the diagram.",
   "license": "MIT",
-  "keywords": ["pi-package", "mmx", "mermaid"],
+  "author": "Eastsidegunn",
+  "homepage": "https://github.com/Eastsidegunn/mmx/tree/main/adapters/pi#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Eastsidegunn/mmx.git",
+    "directory": "adapters/pi"
+  },
+  "bugs": {
+    "url": "https://github.com/Eastsidegunn/mmx/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "mmx",
+    "mermaid",
+    "diagram",
+    "coding-agent"
+  ],
   "type": "module",
+  "files": [
+    "index.ts",
+    "skills",
+    "README.md"
+  ],
   "pi": {
-    "extensions": ["./index.ts"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "omp": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

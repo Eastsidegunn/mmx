@@ -1,5 +1,5 @@
 [English](README.md) · [한국어](README.ko.md) · 简体中文 · [日本語](README.ja.md) · [Español](README.es.md)
-> 本文译自英文原版 [README.md](README.md)（基于 67906d8）。英文版可能更新得更快。
+> 本文译自英文原版 [README.md](README.md)（基于 8d9f4b0）。英文版可能更新得更快。
 
 **AI agent? Read [AGENTS.md](AGENTS.md) first.**
 
