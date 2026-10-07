@@ -36,6 +36,9 @@ If `mmx` is not found afterwards, add `~/.cargo/bin` to your PATH, then run `mmx
 Works with Claude Code, Codex, or any agent that can run a CLI. Runs locally;
 no account, nothing hosted.
 
+Using the [pi](https://pi.dev/) coding agent? `pi install npm:pi-mmx` adds
+mmx tools, `/mmx open`, and delivers your cockpit edits to pi as the next turn.
+
 ## More
 
 - [Guide](GUIDE.md): how a turn works, commands, limitations

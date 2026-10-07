@@ -85,6 +85,14 @@ call any model.
    paragraphs.
 4. Run `mmx serve diagram.mmd` and edit as above.
 
+## Quick start with pi
+
+[pi-mmx](adapters/pi/README.md) is a pi package: `pi install npm:pi-mmx`
+(needs `mmx` 0.4+ on PATH). It gives the model `mmx_render` and `mmx_wait`,
+validates `.mmd` edits made by pi's own edit/write tools, adds `/mmx open`
+(starts `mmx serve` and opens the browser), and delivers each cockpit edit to
+pi as the next turn, with a guard against runaway loops.
+
 ## How a turn looks
 
 This is the scenario recorded in the demo GIF
