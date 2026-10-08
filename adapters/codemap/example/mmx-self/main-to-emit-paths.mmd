@@ -1,0 +1,21 @@
+flowchart LR
+    %% codemap: strategy=path focus=src_main_rs,src_emit_rs
+    src_main_rs["src/main.rs"]
+    src_emit_rs["src/emit.rs"]
+    src_doctor_rs["src/doctor.rs"]
+    src_serve_rs["src/serve.rs"]
+    src_turnlog_rs["src/turnlog.rs"]
+    src_doctor_rs --> src_serve_rs
+    src_doctor_rs --> src_turnlog_rs
+    src_main_rs --> src_doctor_rs
+    src_main_rs --> src_serve_rs
+    src_main_rs -->|3| src_turnlog_rs
+    src_serve_rs -->|2| src_emit_rs
+    src_serve_rs --> src_turnlog_rs
+    src_turnlog_rs --> src_emit_rs
+    src_turnlog_rs --> src_serve_rs
+    classDef focus fill:#fff3bf,stroke:#e67700,stroke-width:3px
+    classDef hub fill:#f3f0ff,stroke:#7048e8,stroke-dasharray:5 3
+    classDef folded fill:#e7f5ff,stroke:#1971c2,stroke-dasharray:4 2
+    classDef external fill:#f8f9fa,stroke:#868e96,color:#495057
+    class src_main_rs,src_emit_rs focus
