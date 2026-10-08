@@ -2,6 +2,12 @@
 
 All notable changes to mmx are documented here. This follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `adapters/codemap`: a skill and reference tool (`codemap.py`, standard library only) for drawing bounded codebase maps—neighborhood, path, impact, or changeset—as flowcharts the human corrects in the cockpit, with an example Rust indexer and three maps of mmx itself.
+
 ## [0.4.2] - 2026-10-08
 
 ### Added
@@ -81,6 +87,7 @@ All notable changes to mmx are documented here. This follows [Keep a Changelog](
 - Initial `mmx render` workflow: render Mermaid to SVG, emit a per-turn `diff.json` and comparison `state.json`, and report parse or encoding errors with exit status 2.
 - Agent skill, installation guide, hook examples, and sample diagrams.
 
+[Unreleased]: https://github.com/Eastsidegunn/mmx/compare/v0.4.2...HEAD
 [0.4.2]: https://github.com/Eastsidegunn/mmx/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Eastsidegunn/mmx/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Eastsidegunn/mmx/compare/v0.3.0...v0.4.0

@@ -93,6 +93,15 @@ validates `.mmd` edits made by pi's own edit/write tools, adds `/mmx open`
 (starts `mmx serve` and opens the browser), and delivers each cockpit edit to
 pi as the next turn, with a guard against runaway loops.
 
+## Drawing a codebase
+
+[`adapters/codemap/`](adapters/codemap/SKILL.md) is a skill for agents that
+draw a bounded map of a codebase (a neighborhood, the paths from A to B, the
+impact of a change, or the current diff) as a flowchart the human corrects in
+the cockpit. It includes a reference reducer (`codemap.py`, standard library
+only) that keeps every picture under 25 nodes and 40 edges, a small Rust
+indexer, and three maps of mmx itself.
+
 ## How a turn looks
 
 This is the scenario recorded in the demo GIF

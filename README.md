@@ -39,6 +39,10 @@ no account, nothing hosted.
 Using the [pi](https://pi.dev/) coding agent? `pi install npm:pi-mmx` adds
 mmx tools, `/mmx open`, and delivers your cockpit edits to pi as the next turn.
 
+Mapping a codebase? [`adapters/codemap/`](adapters/codemap/SKILL.md) lets an
+agent draw a bounded map of the code (a neighborhood, a path, the impact of a
+change) that you correct on the picture.
+
 ## More
 
 - [Guide](GUIDE.md): how a turn works, commands, limitations
