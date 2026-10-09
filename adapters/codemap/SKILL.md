@@ -43,8 +43,13 @@ identifiers (`serve.apply_turn`, `GET /history`) stay exactly as in the
 code. `example/mmx-self/turn-log-change.ko.mmd` is the Korean form of the
 worked example.
 
-Use `flowchart TD`. Declare nodes in reading order: topic, code in flow
-order, decisions. Labels are 2–4 lines using `<br/>`; replace `"` with `'`,
+Use `flowchart LR` by default (the human reads data flow left to right;
+`TD` is an option for tall monitors). Declare nodes in reading order: topic,
+code in flow order, decisions. The pinned renderer does not place nodes by
+declaration order alone, so after rendering count edge crossings (pairs of
+edge paths that intersect in the SVG); if there are more than three, try
+other declaration orders of the code nodes and keep the best — a few
+hundred renders take about a minute and cost no tokens. Labels are 2–4 lines using `<br/>`; replace `"` with `'`,
 drop newlines, leave `&`, `<`, `>` raw (the renderer does not decode
 entities). Whole picture: ≤ 16 nodes and ≤ 20 edges. If the topic needs
 more, split the topic into two pictures, never shrink the picture with
