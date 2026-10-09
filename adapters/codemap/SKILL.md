@@ -49,7 +49,10 @@ code in flow order, decisions. The pinned renderer does not place nodes by
 declaration order alone, so after rendering count edge crossings (pairs of
 edge paths that intersect in the SVG); if there are more than three, try
 other declaration orders of the code nodes and keep the best — a few
-hundred renders take about a minute and cost no tokens. Labels are 2–4 lines using `<br/>`; replace `"` with `'`,
+hundred renders take about a minute and cost no tokens. Finished (gray)
+decisions are declared last and reached only by dashed edges from the last
+code node in the flow, so they rank after it; do not use invisible links or
+other syntax the pinned renderer does not document. Labels are 2–4 lines using `<br/>`; replace `"` with `'`,
 drop newlines, leave `&`, `<`, `>` raw (the renderer does not decode
 entities). Whole picture: ≤ 16 nodes and ≤ 20 edges. If the topic needs
 more, split the topic into two pictures, never shrink the picture with

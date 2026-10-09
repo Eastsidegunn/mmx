@@ -312,6 +312,9 @@ fn poll(shared: Arc<Mutex<Shared>>) {
                     bump(&mut shared, "agent", None);
                 }
             }
+            Err(error) if error.downcast_ref::<crate::RendererFailed>().is_some() => eprintln!(
+                "mmx serve: render external change: {error:#}; restart mmx serve before the next turn: the renderer may be left degraded"
+            ),
             Err(error) => eprintln!("mmx serve: render external change: {error:#}"),
         }
     }
@@ -605,10 +608,6 @@ fn apply_turn(shared: &mut Shared, turn: TurnInput) -> Result<(u16, Value)> {
                 json!({"exit":1,"conflict":true,"seq":shared.seq,"state":state_value(shared)?}),
             ));
         }
-        crate::emit::write_atomic(&shared.input, turn.source.as_bytes())?;
-        shared.observed_hash = state::hex_sha256(turn.source.as_bytes());
-        shared.observed_mtime = modified_time(&shared.input);
-        shared.pending_hash = None;
     }
     // A note with zero diagram changes is still a turn — the human asking a
     // question. force_turn emits the zero-change diff through the ordinary
@@ -619,7 +618,22 @@ fn apply_turn(shared: &mut Shared, turn: TurnInput) -> Result<(u16, Value)> {
         .is_some_and(|note| !note.trim().is_empty());
     let mut job = default_job(&shared.input, "human", turn.note.clone());
     job.force_turn = note_only;
-    let result = run_render_bytes(&job, turn.source.as_bytes())?;
+    // Render before the source is written: a renderer failure then leaves
+    // the file, the state and the poller's view of it exactly as they were.
+    let result = run_render_bytes(&job, turn.source.as_bytes()).map_err(|error| {
+        match error.downcast_ref::<crate::RendererFailed>() {
+            Some(failed) => anyhow::anyhow!(
+                "{failed}; the diagram file was not changed. Restart mmx serve before the next turn: the renderer may be left degraded"
+            ),
+            None => error,
+        }
+    })?;
+    if disk != turn.source.as_bytes() {
+        crate::emit::write_atomic(&shared.input, turn.source.as_bytes())?;
+        shared.observed_hash = state::hex_sha256(turn.source.as_bytes());
+        shared.observed_mtime = modified_time(&shared.input);
+        shared.pending_hash = None;
+    }
     if result.outcome == TurnOutcome::NoOp {
         return Ok((200, json!({"exit": 0, "noop": true})));
     }

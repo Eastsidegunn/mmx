@@ -124,6 +124,7 @@ pub struct Stats {
     pub global_shift: Shift,
     pub nodes: usize,
     pub edges: usize,
+    pub crossings: usize,
 }
 
 #[derive(Serialize)]
@@ -231,6 +232,7 @@ impl DiffReport {
                 },
                 nodes: current.nodes.len(),
                 edges: current.edges.len(),
+                crossings: current.crossings,
             }),
             ..Self::empty(by, note, warnings)
         }
@@ -250,6 +252,7 @@ impl DiffReport {
             stats: Some(Stats {
                 nodes: current.nodes.len(),
                 edges: current.edges.len(),
+                crossings: current.crossings,
                 ..Stats::default()
             }),
             ..Self::empty(by, note, warnings)

@@ -36,6 +36,10 @@ mmx --version   # serve, wait, note and diff v2 need 0.4.0 or newer
 Claude Code, Codex는 물론 CLI를 실행할 수 있는 에이전트라면 무엇이든 함께 쓸 수
 있습니다. 모두 로컬에서 실행되며, 계정이 필요 없고 외부 서버에 올라가는 것도 없습니다.
 
+코드베이스를 그려 보고 싶다면? [`adapters/codemap/`](adapters/codemap/SKILL.md)을 쓰면
+에이전트가 코드의 범위를 한정한 지도(주변 코드, 하나의 경로, 변경의 영향)를 그리고,
+여러분은 그림 위에서 바로 고칠 수 있습니다.
+
 ## 더 보기
 
 - [가이드](GUIDE.md) (English): 턴이 동작하는 방식, 명령어, 제약 사항

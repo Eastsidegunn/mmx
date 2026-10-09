@@ -171,6 +171,13 @@ fn fixed_routes_and_traversal() {
     assert!(page.contains("you: 'You'"));
     // The embedded locale table deliberately retains non-ASCII translations.
     assert!(page.contains("you: '나'"));
+    // The first-screen banner: what Send means, plus the agent's latest
+    // to-do line, in every cockpit language.
+    assert!(page.contains("id=\"banner\""));
+    assert!(page.contains("id=\"banner-task\""));
+    assert_eq!(page.matches("bannerInstruction:").count(), 5);
+    assert_eq!(page.matches("bannerShort:").count(), 5);
+    assert!(page.contains("then press Send; the agent answers in the next turn"));
     // The language switch is a query string on the same route.
     for query in ["/?lang=ko", "/?lang=en"] {
         let (status, _) = request(s.addr, "GET", query, None);

@@ -6,7 +6,13 @@ All notable changes to mmx are documented here. This follows [Keep a Changelog](
 
 ### Added
 
+- The cockpit opens with a one-line banner above the picture: what Send means and the reading order (yellow box, colored boxes, pink decisions, gray finished decisions), plus the first line of the agent's latest note. It collapses to one short line after you send a turn and expands again when the agent answers. Translated for all five cockpit languages.
+- `stats.crossings` in `diff.json` (and `crossings` in state): the number of edge pairs whose routed lines cross. `mmx render --layout-search <N>` tries up to N (max 500) deterministic reorderings of a flowchart's top-level node declaration lines and edge lines, keeps the one with the fewest crossings that still parses to the same graph, writes it back to the `.mmd` before the turn, and prints `layout: crossings <before> -> <after> (searched N, node and edge order)`; with a numeric `linkStyle` or a `~~~` link only node declarations move (`node order only`); pictures with subgraphs, a non-flowchart header, a duplicate declaration, a multi-line label or an `accTitle`/`accDescr` print `layout: search skipped (<reason>)` and are left untouched. The file's dominant line ending (LF or CRLF) and a missing final newline are preserved.
 - `adapters/codemap`: a skill for explaining a code change as one picture in four layers—topic, the code involved at function level with one line each, how each unit changes, and the human's open decisions—with the first screen saying what the human must do and what Send means, every edge anchored to a `path:line@commit`, Korean labels by default, and a worked example of an mmx commit in English and Korean. `codemap.py` (standard library only) selects candidates for the code layer; `example/index_rust.py` is a small Rust indexer; the skill documents the `graph.v2` facts an index should supply.
+
+### Fixed
+
+- A panic inside the renderer is now exit 1 from the CLI with `renderer failed on this input; the file was not changed` and the panic message, instead of exit 101; `mmx serve` renders a submitted turn before writing the `.mmd`, so a failed turn leaves the file and the state untouched and is answered with its normal error response (which advises restarting serve, since the renderer may be left degraded). The wasm build is unaffected: there a panic still aborts.
 
 ## [0.4.2] - 2026-10-08
 

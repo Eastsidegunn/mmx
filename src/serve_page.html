@@ -15,6 +15,14 @@
     #turn { color:#555; }
     #status { min-height:1.5em; margin:10px 0; color:#9b351e; white-space:pre-wrap; }
     #status:not(:empty) { background:#fff3ec; border-left:3px solid #b04a17; padding:6px 10px; border-radius:0 6px 6px 0; }
+    #banner { display:flex; flex-wrap:wrap; gap:4px 16px; align-items:baseline; margin:0 0 12px; padding:6px 10px; font-size:13.5px; line-height:1.4; background:#fff8db; border-left:3px solid #e6a700; border-radius:0 6px 6px 0; }
+    #banner[hidden] { display:none; }
+    #banner-task { font-weight:600; color:#23272e; }
+    #banner-task:empty { display:none; }
+    #banner-instruction { color:#555; }
+    #banner.collapsed #banner-instruction, #banner.collapsed #banner-task { display:none; }
+    #banner-short { display:none; color:#555; }
+    #banner.collapsed #banner-short { display:inline; }
     mmx-editor { --mmx-height: min(72vh, 820px); }
     #history { margin:4px 0 0; padding:0; list-style:none; font-size:13.5px; color:#444; }
     #history li { padding:4px 0; border-top:1px solid #eee8df; }
@@ -32,6 +40,7 @@
   <header><h1>mmx cockpit</h1><span id="turn">Loading…</span></header>
   <div id="status" role="status" aria-live="polite"></div>
   <button id="load-current" hidden>Load current state</button>
+  <div id="banner" hidden><span id="banner-task"></span><span id="banner-instruction"></span><span id="banner-short"></span></div>
   <div class="layout">
     <mmx-editor></mmx-editor>
     <aside>
@@ -69,6 +78,8 @@
         noChange: 'No changes',
         lossy: 'Warning: this edit touched syntax that cannot be patched directly (such as an & group), so the diagram text was rewritten — some formatting, such as dashed arrows or comments, may have been lost',
         reconnecting: 'Reconnecting…',
+        bannerInstruction: 'Fix wrong or missing links on the picture, or edit a decision box, then press Send; the agent answers in the next turn. Read: yellow box → colored boxes → pink decisions / gray finished decisions.',
+        bannerShort: 'Sent — the agent answers in the next turn.',
         editor: {
           addNode: '+ Node', send: 'Send turn', sendWithCount: n => `Send turn (${n} ${n === 1 ? 'change' : 'changes'})`,
           revert: 'Revert', autoLayout: 'Auto layout', fitView: 'Fit view',
@@ -99,6 +110,8 @@
         noChange: '변경 없음',
         lossy: '주의: 이 편집은 직접 고칠 수 없는 구문(& 그룹 등)을 건드려 다이어그램 텍스트를 다시 썼습니다 — 점선 화살표나 주석 같은 서식 일부가 사라졌을 수 있습니다',
         reconnecting: '연결 재시도 중…',
+        bannerInstruction: '그림에서 잘못되거나 빠진 연결을 고치거나 결정 상자를 편집한 뒤 보내기를 누르세요. 에이전트는 다음 턴에 답합니다. 읽는 순서: 노란 상자 → 색 상자 → 분홍 결정 / 회색 끝난 결정.',
+        bannerShort: '보냈습니다 — 에이전트가 다음 턴에 답합니다.',
         editor: {
           addNode: '+ 노드', send: '턴 보내기', sendWithCount: n => `턴 보내기 (변경 ${n}건)`,
           revert: '되돌리기', autoLayout: '자동 배치', fitView: '화면 맞춤',
@@ -129,6 +142,8 @@
         noChange: '没有更改',
         lossy: '警告：这次编辑涉及无法直接修改的语法（如 & 分组），因此重写了图表文本；虚线箭头或注释等格式可能丢失',
         reconnecting: '正在重新连接…',
+        bannerInstruction: '在图上修正错误或缺失的连线，或编辑决策框，然后点击发送；智能体会在下一轮回应。阅读顺序：黄色框 → 彩色框 → 粉色待决 / 灰色已决。',
+        bannerShort: '已发送，智能体会在下一轮回应。',
         editor: {
           addNode: '+ 节点', send: '发送', sendWithCount: n => `发送（${n} 处更改）`,
           revert: '撤销修改', autoLayout: '自动布局', fitView: '适应画布',
@@ -159,6 +174,8 @@
         noChange: '変更なし',
         lossy: '警告：この編集は直接書き換えられない構文（& グループなど）を含むため、ダイアグラムのテキストを書き直しました。破線の矢印やコメントなど、一部の書式が失われた可能性があります',
         reconnecting: '再接続中…',
+        bannerInstruction: '図の間違った接続や足りない接続を直すか、決定ボックスを編集して送信を押してください。エージェントは次のターンで答えます。読む順番：黄色の箱 → 色付きの箱 → ピンクの決定 / 灰色の決定済み。',
+        bannerShort: '送信済み。エージェントは次のターンで答えます。',
         editor: {
           addNode: '+ ノード', send: 'ターンを送信', sendWithCount: n => `ターンを送信（変更 ${n} 件）`,
           revert: '元に戻す', autoLayout: '自動レイアウト', fitView: '全体を表示',
@@ -189,6 +206,8 @@
         noChange: 'Sin cambios',
         lossy: 'Advertencia: esta edición afectó a sintaxis que no se puede modificar directamente (como un grupo &), así que se reescribió el texto del diagrama. Puede que se hayan perdido algunos detalles de formato, como flechas discontinuas o comentarios',
         reconnecting: 'Reconectando…',
+        bannerInstruction: 'Corrige en la imagen las conexiones erróneas o que faltan, o edita una casilla de decisión, y pulsa Enviar; el agente responde en el siguiente turno. Orden de lectura: casilla amarilla → casillas de colores → decisiones rosas / decisiones grises ya tomadas.',
+        bannerShort: 'Enviado — el agente responde en el siguiente turno.',
         editor: {
           addNode: '+ Nodo', send: 'Enviar turno', sendWithCount: n => `Enviar turno (${n} ${n === 1 ? 'cambio' : 'cambios'})`,
           revert: 'Revertir', autoLayout: 'Distribución automática', fitView: 'Ajustar vista',
@@ -220,11 +239,34 @@
     document.querySelector('#history-title').textContent = t.historyTitle;
     document.querySelector('#history-empty').textContent = t.historyEmpty;
     ed.strings = t.editor;
+    const banner = document.querySelector('#banner');
+    document.querySelector('#banner-instruction').textContent = t.bannerInstruction;
+    document.querySelector('#banner-short').textContent = t.bannerShort;
     let seq = -1;
     let epoch = null;
     let waitingSeq = -1;
     let sending = false;
+    // Banner inputs: the live state's speaker/note and the newest agent
+    // note in the log; collapsed once this page has sent a turn, until the
+    // agent speaks again.
+    let bannerState = null;
+    let bannerHistory = [];
+    let bannerCollapsed = false;
+    let expandedAtSeq = -1;
     const history = document.querySelector('#history');
+    // The baseline render ('serve'/'unknown') is not a speaker; anyone else
+    // who is not the human counts as the agent.
+    const isAgent = by => by && by !== 'human' && by !== 'serve' && by !== 'unknown';
+    const firstLine = note => (note || '').split('\n').find(l => l.trim()) || '';
+    function renderBanner() {
+      // The first screen: what Send means, and the agent's "to do" line —
+      // only when the newest turn is the agent's; an older note is stale.
+      const s = bannerState;
+      const newest = s || bannerHistory[bannerHistory.length - 1];
+      document.querySelector('#banner-task').textContent = newest && isAgent(newest.by) ? firstLine(newest.note) : '';
+      banner.classList.toggle('collapsed', bannerCollapsed);
+      banner.hidden = s === null;
+    }
     function changeSummary(m) {
       // One line from the server's generic counts.
       if (m.error) return t.summaryError(m.error);
@@ -245,6 +287,8 @@
     }
     function renderHistory(entries) {
       // The whole conversation from the turn log, latest first.
+      bannerHistory = entries;
+      renderBanner();
       history.replaceChildren();
       if (!entries.length) {
         const li = document.createElement('li');
@@ -288,6 +332,14 @@
         : t.lastTurn(s.by === 'human' ? t.you : s.by, s.note);
       status.textContent = '';
       loadCurrent.hidden = true;
+      // An agent turn with a note re-expands; a poller-rendered edit with
+      // no note is not the agent speaking.
+      if (isAgent(s.by) && firstLine(s.note) && bannerState !== null && s.seq !== bannerState.seq) {
+        bannerCollapsed = false;
+        expandedAtSeq = s.seq;
+      }
+      bannerState = s;
+      renderBanner();
     }
     async function refresh() {
       const response = await fetch('/state', {cache:'no-store'});
@@ -328,6 +380,10 @@
           status.textContent = t.noChange;
         } else {
           showState({...result.state, svg:result.svg});
+          // Collapse for the turn just sent, unless a newer agent note
+          // already expanded the banner while the send was in flight.
+          if (expandedAtSeq <= result.state.seq) bannerCollapsed = true;
+          renderBanner();
           ed.setNote('');
           if (event.detail.lossy) {
             status.textContent = t.lossy;

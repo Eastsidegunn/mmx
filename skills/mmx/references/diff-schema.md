@@ -32,7 +32,7 @@ For `diagram.mmd`, mmx writes `diagram.svg`, `diagram.diff.json`, and `diagram.s
 
 A source hunk is `{old_start, old_lines, new_start, new_lines, lines}`. Starts are one-based line numbers, or zero for an empty side; counts describe the included hunk lines on each side. Each line begins with a space (context), `-` (old), or `+` (new); a line without a final newline also has the standard `\\ No newline at end of file` marker. Hunks carry one context line on each side. The total `lines` entries are capped at 400; `source_hunks_truncated` then becomes true. Source hunks show text changes such as `classDef`, `style`, comments, and changes in diagrams whose nodes and edges are partially modeled. They can coexist with semantic changes. A CRLF/LF-only conversion has no line hunks but sets `source_changed` and warns `line endings changed (CRLF/LF)`.
 
-`stats` contains `mean_move_px`, `max_move_px`, `global_shift: {dx, dy}`, and `nodes`/`edges` counts. Movement uses shared node centers after subtracting the component-wise median shift. Derived coordinates are rounded to one decimal place. `moved` reports layout shifts; it does not prevent them.
+`stats` contains `mean_move_px`, `max_move_px`, `global_shift: {dx, dy}`, `nodes`/`edges` counts, and `crossings`. Movement uses shared node centers after subtracting the component-wise median shift. Derived coordinates are rounded to one decimal place. `moved` reports layout shifts; it does not prevent them. `crossings` is the integer number of edge pairs whose routed lines cross in the rendered picture (`mmx render --layout-search N` reorders the top-level node declaration lines and edge lines of a flowchart to lower it).
 
 `error` has required `kind` (`parse` or `encoding`) and `message`. Optional `line` and `column` are one-based; column counts characters. Optional `candidates` is a string array. Unavailable fields are omitted. On exit 2 the graph change sections are empty, `stats` is null, and SVG/state remain unchanged. A parse error may still include `source_hunks` when the previous source is known. Lint follows mermaid.js and detects missing diagram headers and unclosed flowchart shape brackets before rendering; `A[foo (bar]`, `A[a|b]`, and header-less files are lint errors even if mmdr renders them. These report exact positions. Renderer errors retain the renderer's own message and available position.
 
@@ -51,6 +51,7 @@ A non-flowchart diagram warns `"<kind> diagram: the nodes/edges diff is partial 
 | `subgraphs` | array | `{id, label, nodes}` objects. |
 | `nodes` | object keyed by ID | `label`, `shape`, and numeric top-left `x`, `y`, size `w`, `h`. |
 | `edges` | array | `{key, from, to, label, style}` objects. |
+| `crossings` | integer | Edge pairs whose routed lines cross (0 when absent). |
 
 A v1 state loads without corruption recovery. Its missing source, direction, subgraphs, and edge styles are unknown, so mmx does not report changes against those fields on the upgrade turn. The next state is v2. Do not edit state manually.
 

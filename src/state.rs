@@ -29,6 +29,8 @@ pub struct State {
     pub subgraphs: Option<Vec<SubgraphInfo>>,
     pub nodes: BTreeMap<String, StateNode>,
     pub edges: Vec<StateEdge>,
+    #[serde(default)]
+    pub crossings: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -100,6 +102,7 @@ impl State {
             subgraphs: Some(model.subgraphs.clone()),
             nodes,
             edges,
+            crossings: model.crossings,
         }
     }
 
@@ -143,6 +146,7 @@ impl State {
             subgraphs: self.subgraphs.clone().unwrap_or_default(),
             nodes,
             edges,
+            crossings: self.crossings,
         }
     }
 

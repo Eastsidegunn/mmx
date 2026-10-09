@@ -31,6 +31,8 @@ mmx --version   # serve, wait, note and diff v2 need 0.4.0 or newer
 
 支持 Claude Code、Codex，以及任何能运行 CLI 的智能体。纯本地运行：无需账号，不依赖任何托管服务。
 
+想画出代码库？[`adapters/codemap/`](adapters/codemap/SKILL.md) 让智能体绘制一张范围有限的代码地图（某个邻近区域、一条路径、一次改动的影响），你直接在图上修正。
+
 ## 更多内容
 
 - [使用指南](GUIDE.md) (English)：一轮交互如何进行、命令、局限

@@ -58,6 +58,8 @@ pub struct GraphModel {
     pub nodes: BTreeMap<String, NodeInfo>,
     /// edge key -> info, key = "{from}->{to}#{k}"
     pub edges: BTreeMap<String, EdgeInfo>,
+    /// Edge pairs whose routes cross in this layout.
+    pub crossings: usize,
 }
 
 impl GraphModel {
@@ -112,6 +114,7 @@ impl GraphModel {
                 .collect(),
             nodes,
             edges,
+            crossings: r.crossings,
         }
     }
 }

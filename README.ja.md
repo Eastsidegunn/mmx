@@ -36,6 +36,10 @@ mmx --version   # serve, wait, note and diff v2 need 0.4.0 or newer
 Claude Code、Codex のほか、CLI を実行できるエージェントなら何でも使えます。
 ローカルで動作し、アカウント登録は不要、外部ホストにも何も置きません。
 
+コードベースを図にしたい？ [`adapters/codemap/`](adapters/codemap/SKILL.md) を使うと、
+エージェントが範囲を絞ったコードの地図（周辺、ひとつの経路、変更の影響）を描き、
+あなたは図の上で直接直せます。
+
 ## 詳しく見る
 
 - [ガイド](GUIDE.md) (English): ターンの流れ、コマンド、制限事項

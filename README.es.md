@@ -36,6 +36,10 @@ mmx --version   # serve, wait, note and diff v2 need 0.4.0 or newer
 Funciona con Claude Code, Codex o cualquier agente que pueda ejecutar una CLI.
 Todo corre en local: sin cuenta y sin nada alojado en la nube.
 
+¿Quieres mapear una base de código? [`adapters/codemap/`](adapters/codemap/SKILL.md)
+permite que un agente dibuje un mapa acotado del código (un vecindario, una ruta,
+el impacto de un cambio) que tú corriges sobre la imagen.
+
 ## Más información
 
 - [Guía](GUIDE.md) (en inglés): cómo funciona un turno, comandos, limitaciones

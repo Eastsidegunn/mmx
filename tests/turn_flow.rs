@@ -867,3 +867,276 @@ fn note_retry_over_an_error_turn_still_reports_the_error() {
     assert_eq!(again.status.code(), Some(2), "{again:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- Edge crossings and `--layout-search` ----
+
+/// An order the search reliably improves (4 -> 1 within 40 variants).
+const CROSSY: &str = "flowchart TD\n    A[a]\n    B[b]\n    C[c]\n    D[d]\n    E[e]\n    F[f]\n    A --> E\n    A --> D\n    B --> F\n    B --> D\n    C --> F\n    C --> E\n    E --> B\n    D --> C\n";
+
+fn graph_model(state: &Value) -> Value {
+    let mut nodes: Vec<Value> = state["nodes"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(id, n)| json!([id, n["label"], n["shape"]]))
+        .collect();
+    let mut edges: Vec<Value> = state["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| json!([e["key"], e["label"], e["style"]]))
+        .collect();
+    nodes.sort_by_key(|n| n[0].as_str().unwrap().to_owned());
+    edges.sort_by_key(|e| e[0].as_str().unwrap().to_owned());
+    json!({"nodes": nodes, "edges": edges})
+}
+
+fn sorted_lines(text: &str) -> Vec<&str> {
+    let mut lines: Vec<&str> = text.lines().collect();
+    lines.sort_unstable();
+    lines
+}
+
+fn search(dir: &Path, n: &str) -> Output {
+    mmx(
+        dir,
+        &["render", "d.mmd", "--by", "agent", "--layout-search", n],
+    )
+}
+
+/// `stats.crossings` is written on every successful turn and into state; a
+/// straight chain has none, and the count is stable across renders.
+#[test]
+fn crossings_are_counted_and_stable() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", "flowchart LR\n    A --> B\n    B --> C\n");
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    assert_eq!(read_json(&dir.join("d.diff.json"))["stats"]["crossings"], 0);
+    assert_eq!(read_json(&dir.join("d.state.json"))["crossings"], 0);
+
+    write(&dir, "d.mmd", CROSSY);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    let first = read_json(&dir.join("d.diff.json"))["stats"]["crossings"]
+        .as_u64()
+        .unwrap();
+    assert!(first > 0);
+    assert_eq!(read_json(&dir.join("d.state.json"))["crossings"], first);
+    let other = tempdir();
+    write(&other, "d.mmd", CROSSY);
+    ok(&other, &["render", "d.mmd", "--by", "agent"]);
+    assert_eq!(
+        read_json(&other.join("d.diff.json"))["stats"]["crossings"],
+        first
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&other);
+}
+
+/// The search lowers the count, keeps the node and edge model, reports one
+/// stderr line, records the reorder as a source change, and is reproducible.
+#[test]
+fn layout_search_lowers_crossings_and_keeps_the_graph() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", CROSSY);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    let before_state = read_json(&dir.join("d.state.json"));
+    let before = before_state["crossings"].as_u64().unwrap();
+    assert!(before > 0);
+
+    let out = search(&dir, "40");
+    assert!(out.status.success(), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let after_state = read_json(&dir.join("d.state.json"));
+    let after = after_state["crossings"].as_u64().unwrap();
+    assert!(after < before, "{before} -> {after}: {stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "layout: crossings {before} -> {after} (searched 40"
+        )),
+        "{stderr}"
+    );
+    assert_eq!(graph_model(&before_state), graph_model(&after_state));
+    let source = std::fs::read_to_string(dir.join("d.mmd")).unwrap();
+    assert_ne!(source, CROSSY);
+    assert_eq!(sorted_lines(&source), sorted_lines(CROSSY));
+    let diff = read_json(&dir.join("d.diff.json"));
+    assert_eq!(diff["by"], "agent");
+    assert_eq!(diff["source_changed"], true);
+    assert!(!diff["source_hunks"].as_array().unwrap().is_empty());
+    assert_eq!(diff["nodes"]["added"], json!([]));
+    assert_eq!(diff["nodes"]["removed"], json!([]));
+    assert_eq!(diff["nodes"]["changed"], json!([]));
+    assert_eq!(diff["edges"]["added"], json!([]));
+    assert_eq!(diff["edges"]["removed"], json!([]));
+    assert_eq!(diff["edges"]["changed"], json!([]));
+    assert_eq!(diff["stats"]["crossings"], after);
+
+    let again = tempdir();
+    write(&again, "d.mmd", CROSSY);
+    assert!(search(&again, "40").status.success());
+    assert_eq!(
+        std::fs::read_to_string(again.join("d.mmd")).unwrap(),
+        source
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&again);
+}
+
+/// A file without a final newline is reordered line by line, never glued.
+#[test]
+fn layout_search_keeps_lines_whole_without_final_newline() {
+    let dir = tempdir();
+    let source = CROSSY.trim_end_matches('\n');
+    write(&dir, "d.mmd", source);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    let before = read_json(&dir.join("d.state.json"));
+    let out = search(&dir, "40");
+    assert!(out.status.success(), "{out:?}");
+    let after = read_json(&dir.join("d.state.json"));
+    assert!(after["crossings"].as_u64().unwrap() < before["crossings"].as_u64().unwrap());
+    assert_eq!(graph_model(&before), graph_model(&after));
+    let written = std::fs::read_to_string(dir.join("d.mmd")).unwrap();
+    assert!(!written.ends_with('\n'));
+    assert_eq!(sorted_lines(&written), sorted_lines(source));
+    for (id, n) in after["nodes"].as_object().unwrap() {
+        assert_eq!(n["label"].as_str().unwrap(), id.to_lowercase(), "{written}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Files the search cannot reorder safely are skipped, say so, and stay
+/// byte-for-byte untouched.
+#[test]
+fn layout_search_skips_unsafe_files_untouched() {
+    for (source, reason) in [
+        (
+            "flowchart TD\n    A[a]\n    B[b]\n    subgraph S\n      A --> B\n    end\n",
+            "diagram has subgraphs",
+        ),
+        (
+            "flowchart TD\n    A[a]\n    B[b]\n    A --> B\n    A[later wins]\n",
+            "a node is declared more than once",
+        ),
+        (
+            "erDiagram\n    A ||--o{ B : has\n    C ||--o{ D : has\n",
+            "not a flowchart",
+        ),
+    ] {
+        let dir = tempdir();
+        write(&dir, "d.mmd", source);
+        let out = search(&dir, "5");
+        assert!(out.status.success(), "{out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("layout: search skipped ({reason})")),
+            "{stderr}"
+        );
+        assert_eq!(std::fs::read_to_string(dir.join("d.mmd")).unwrap(), source);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// A label spanning lines is a lint error (exit 2) before any search; the
+/// file is left as written.
+#[test]
+fn layout_search_leaves_a_multi_line_label_to_lint() {
+    let dir = tempdir();
+    let source = "flowchart TD\n    A[\"first\n    second\"]\n    B[b]\n    A --> B\n    B --> A\n";
+    write(&dir, "d.mmd", source);
+    let out = search(&dir, "5");
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("layout:"));
+    assert_eq!(std::fs::read_to_string(dir.join("d.mmd")).unwrap(), source);
+    assert_eq!(read_json(&dir.join("d.diff.json"))["error"]["line"], 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A numeric `linkStyle` (or a `~~~` link) keeps edge lines in place, and
+/// the stderr line says so; `accDescr` blocks make the file unsearchable.
+#[test]
+fn layout_search_pins_edges_under_linkstyle_and_skips_acc_blocks() {
+    let dir = tempdir();
+    let source = format!("{CROSSY}    linkStyle 2 stroke:#f00\n");
+    write(&dir, "d.mmd", &source);
+    let out = search(&dir, "10");
+    assert!(out.status.success(), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("(searched 10, node order only: linkStyle/~~~ present)"),
+        "{stderr}"
+    );
+    let written = std::fs::read_to_string(dir.join("d.mmd")).unwrap();
+    let edges = |t: &str| -> Vec<String> {
+        t.lines()
+            .filter(|l| l.contains("-->"))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(edges(&written), edges(&source));
+    assert_eq!(sorted_lines(&written), sorted_lines(&source));
+
+    let acc = format!(
+        "flowchart TD\n    accDescr {{\n      A --> B\n    }}\n{}",
+        &CROSSY["flowchart TD\n".len()..]
+    );
+    write(&dir, "d.mmd", &acc);
+    let out = search(&dir, "5");
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr)
+        .contains("layout: search skipped (accTitle/accDescr present)"));
+    assert_eq!(std::fs::read_to_string(dir.join("d.mmd")).unwrap(), acc);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A CRLF file without a final newline keeps CRLF everywhere after a reorder.
+#[test]
+fn layout_search_keeps_crlf_endings() {
+    let dir = tempdir();
+    let source = CROSSY.replace('\n', "\r\n");
+    let source = source.trim_end_matches("\r\n");
+    write(&dir, "d.mmd", source);
+    ok(&dir, &["render", "d.mmd", "--by", "agent"]);
+    let before = read_json(&dir.join("d.state.json"))["crossings"]
+        .as_u64()
+        .unwrap();
+    let out = search(&dir, "40");
+    assert!(out.status.success(), "{out:?}");
+    let after = read_json(&dir.join("d.state.json"))["crossings"]
+        .as_u64()
+        .unwrap();
+    assert!(after < before);
+    let written = std::fs::read_to_string(dir.join("d.mmd")).unwrap();
+    assert_ne!(written, source);
+    assert_eq!(
+        written.matches('\n').count(),
+        written.matches("\r\n").count()
+    );
+    assert!(!written.ends_with('\n') && !written.ends_with('\r'));
+    assert_eq!(sorted_lines(&written), sorted_lines(source));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--layout-search 0` is the plain render; a usage error leaves the file.
+#[test]
+fn layout_search_zero_and_usage_errors_leave_the_file() {
+    let dir = tempdir();
+    write(&dir, "d.mmd", CROSSY);
+    let out = search(&dir, "0");
+    assert!(out.status.success(), "{out:?}");
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("layout:"));
+    assert_eq!(std::fs::read_to_string(dir.join("d.mmd")).unwrap(), CROSSY);
+    let out = mmx(
+        &dir,
+        &[
+            "render",
+            "d.mmd",
+            "--layout-search",
+            "40",
+            "--prev",
+            "nope.state.json",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(std::fs::read_to_string(dir.join("d.mmd")).unwrap(), CROSSY);
+    let _ = std::fs::remove_dir_all(&dir);
+}

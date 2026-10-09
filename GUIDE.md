@@ -26,6 +26,9 @@ drag to connect, delete, add, write a note, press Send. The agent, waiting in
 direction, subgraphs, text hunks, your note) and answers by editing the
 diagram with a note of its own (`mmx render --by agent --note`), or with just a
 note (`mmx note`). The cockpit shows the answer and the full turn history live.
+A banner above the picture says what Send means and the reading order, and
+shows the first line of the agent's latest note (by convention, what you must
+do); it shrinks to one line after you send and expands when the agent answers.
 
 Your edits patch the source text instead of regenerating it, so comments,
 dashed arrows, subgraphs and styles survive. Both sides see the same picture:
@@ -153,7 +156,7 @@ pretty-printed and trimmed of empty sections here):
     {"id": "pay", "dx": 0.0, "dy": 1.3},
     {"id": "ship", "dx": 61.4, "dy": -0.2}
   ],
-  "stats": {"mean_move_px": 50.6, "max_move_px": 67.0, "global_shift": {"dx": 61.4, "dy": 0.2}, "nodes": 5, "edges": 4},
+  "stats": {"mean_move_px": 50.6, "max_move_px": 67.0, "global_shift": {"dx": 61.4, "dy": 0.2}, "nodes": 5, "edges": 4, "crossings": 0},
   "warnings": [],
   "error": null
 }
@@ -168,6 +171,8 @@ Three things to notice:
 - `moved`: renaming one label widened the node, and the renderer re-laid out
   the row, so every other node shifted by about 60 px. mmx reports this every
   turn; it does not prevent it (see [limitations](#known-limitations)).
+  `stats.crossings` is the number of edge pairs whose lines cross in the
+  picture, so the agent can tell when a reply made the picture harder to read.
 
 The agent then inserted a decision node and answered:
 
@@ -190,7 +195,7 @@ The full field reference is
 
 | Command | What it does |
 | --- | --- |
-| `mmx render <f.mmd> --by <who> [--note <text>] [--print-if-changed]` | Render the SVG and write this turn's diff and state. Unchanged bytes with no note are a no-op. |
+| `mmx render <f.mmd> --by <who> [--note <text>] [--print-if-changed] [--layout-search <N>]` | Render the SVG and write this turn's diff and state. Unchanged bytes with no note are a no-op. `--layout-search N` first tries up to N (max 500) deterministic reorderings of a flowchart's top-level node declaration lines and edge lines (each kept with the comment directly above it), keeps the one with the fewest edge crossings if it parses to the same graph, writes it to the `.mmd` (the turn records it like any edit) and prints `layout: crossings <before> -> <after> (searched N, node and edge order)` on stderr. Pictures it cannot reorder safely print `layout: search skipped (<reason>)` and stay untouched: subgraphs, a non-flowchart, an id declared twice, a label spanning lines, or an `accTitle`/`accDescr`. With a numeric `linkStyle` or a `~~~` link only node declarations move (`node order only` in the stderr line), since mermaid.js counts `~~~` links in `linkStyle` indices. |
 | `mmx serve <f.mmd> [--addr 127.0.0.1:0]` | Local browser cockpit: edit on the picture, send turns, see replies and the turn history live. Prints its URL. |
 | `mmx wait <f.mmd> [--timeout 300]` | Block until the human has spoken last; print each unanswered human turn as one JSON line. |
 | `mmx note <f.mmd> "<text>" [--by agent]` | Make a turn that carries a message, with or without diagram changes. |
@@ -227,7 +232,7 @@ Exit codes:
 | --- | --- |
 | `0` | Success, including a no-op. `doctor`: no problems found. |
 | `2` | A fixable parse or encoding error (`render`, `note`). `diff.json` `error` has the message, line and column; fix the source and render again. |
-| `1` | Anything else: I/O, usage, unsupported format. `doctor`: problems found. |
+| `1` | Anything else: I/O, usage, unsupported format, or a panic inside the renderer (`renderer failed on this input; the file was not changed`). `doctor`: problems found. |
 | `3` | `mmx wait` only: timeout, nothing to report. |
 
 A human turn can be an error turn too: Mermaid that `mmx serve` receives
@@ -282,6 +287,14 @@ other files are mmx's own memory. Do not edit them by hand. A
   a diagram header are errors (exit 2) even if the renderer would accept them.
   Quote such labels: `A["Charge (Stripe"]`.
 - **Some edge labels can be overlapped by nodes** (renderer layout).
+- **A renderer panic is reported, not survived cleanly.** The CLI exits 1
+  and `mmx serve` answers that turn with an error, both leaving the `.mmd`
+  untouched; but the renderer's text measurer may be left degraded for the
+  rest of that process, so restart `mmx serve` before the next turn.
+- **An I/O failure after a successful render in `mmx serve`** (svg, diff and
+  state written, then the `.mmd` could not be replaced) answers the turn with
+  an error while those outputs already describe the submitted source; the
+  next turn re-renders from the file and repairs them.
 - **`mmx serve` is local-only and unauthenticated.** It binds to loopback by
   default; anyone who can reach the port can edit the diagram. See
   [SECURITY.md](SECURITY.md).

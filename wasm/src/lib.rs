@@ -73,6 +73,11 @@ fn run(input: &[u8]) -> Result<String, String> {
 
     let rendered = match lint::check(source).and_then(|_| render::render_turn(source)) {
         Ok(r) => r,
+        // Reached only on targets that unwind; wasm32-unknown-unknown aborts
+        // on panic, so the CLI/serve recovery does not apply here.
+        Err(err) if err.kind == render::RENDERER_FAILED => {
+            return Err(format!("renderer failed on this input ({})", err.message));
+        }
         Err(err) => {
             let mut report =
                 emit::DiffReport::turn_error(by, note, &err, Vec::new(), prev.is_none());

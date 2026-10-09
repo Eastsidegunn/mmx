@@ -4,6 +4,7 @@ pub mod diff;
 pub mod doctor;
 pub mod emit;
 pub mod init;
+pub mod layout_search;
 pub mod lint;
 pub mod model;
 pub mod render;
@@ -79,6 +80,29 @@ enum Prev {
         path: PathBuf,
         warning: &'static str,
     },
+}
+
+/// A panic inside the renderer. Not a turn: nothing is written, and the
+/// caller reports it as exit 1 / an HTTP 500 rather than as diff.json.
+#[derive(Debug)]
+pub struct RendererFailed(pub String);
+
+impl std::fmt::Display for RendererFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "renderer failed on this input ({})", self.0)
+    }
+}
+
+impl std::error::Error for RendererFailed {}
+
+/// The argument checks `run_render` makes before touching any file, for a
+/// caller that wants to edit the input first (`--layout-search`).
+pub fn validate_job(job: &RenderJob) -> anyhow::Result<()> {
+    check_path_collisions(job)?;
+    if let PrevSource::Explicit(p) = &job.prev {
+        anyhow::ensure!(p.exists(), "--prev {} does not exist", p.display());
+    }
+    Ok(())
 }
 
 pub fn run_render(job: &RenderJob) -> anyhow::Result<TurnResult> {
@@ -157,6 +181,9 @@ pub fn run_render_bytes(job: &RenderJob, bytes: &[u8]) -> anyhow::Result<TurnRes
     }
     let rendered = match render::render_turn(source) {
         Ok(r) => r,
+        Err(err) if err.kind == render::RENDERER_FAILED => {
+            return Err(RendererFailed(err.message).into());
+        }
         Err(err) => {
             let mut report = emit::DiffReport::turn_error(
                 by,

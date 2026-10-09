@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -64,6 +64,10 @@ enum Command {
         /// Print diff.json to stdout if this run wrote a non-baseline turn
         #[arg(long)]
         print_if_changed: bool,
+        /// Try N reorderings of the node declaration lines and keep the one
+        /// with the fewest edge crossings before rendering (max 500; 0 = off)
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        layout_search: usize,
     },
     /// Make a turn that carries a message (any unrendered edits included)
     Note {
@@ -135,6 +139,7 @@ fn main() -> ExitCode {
             state_out,
             format,
             print_if_changed,
+            layout_search,
         } => {
             if format != "mermaid" {
                 eprintln!("mmx v0 supports only --format mermaid (got {format:?})");
@@ -164,7 +169,23 @@ fn main() -> ExitCode {
                 log: Some(log),
                 input,
             };
-            finish_render(&job)
+            if let Err(e) = mmx::validate_job(&job) {
+                eprintln!("mmx: {e:#}");
+                return ExitCode::from(1);
+            }
+            let original = match search_layout(&job.input, layout_search) {
+                Ok(original) => original,
+                Err(code) => return code,
+            };
+            let result = run_render(&job);
+            if let (Err(e), Some(original)) = (&result, &original) {
+                if e.downcast_ref::<mmx::RendererFailed>().is_some() {
+                    if let Err(e) = mmx::emit::write_atomic(&job.input, original) {
+                        eprintln!("mmx: {e:#}");
+                    }
+                }
+            }
+            finish_render(&job, result)
         }
         Command::Note { input, text, by } => {
             let log = sibling(&input, "turns.jsonl");
@@ -173,7 +194,8 @@ fn main() -> ExitCode {
             }
             let mut job = default_job(&input, &by, Some(text));
             job.force_turn = true;
-            finish_render(&job)
+            let result = run_render(&job);
+            finish_render(&job, result)
         }
         Command::Wait { input, timeout } => {
             let diffs = mmx::turnlog::run_wait(&input, Duration::from_secs(timeout));
@@ -195,9 +217,60 @@ fn main() -> ExitCode {
     }
 }
 
+/// `--layout-search`: rewrite the input with the least-crossing declaration
+/// order before the turn renders it, returning the original bytes when it
+/// did. A parse error is left to the render (exit 2 with the usual
+/// diff.json); a renderer failure is exit 1 here. N = 0 does nothing.
+fn search_layout(input: &Path, variants: usize) -> Result<Option<Vec<u8>>, ExitCode> {
+    use mmx::layout_search::Search;
+    if variants == 0 {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(input).map_err(|e| {
+        eprintln!("mmx: cannot read {}: {e}", input.display());
+        ExitCode::from(1)
+    })?;
+    let Ok(source) = std::str::from_utf8(&bytes) else {
+        return Ok(None);
+    };
+    match mmx::layout_search::search(source, variants) {
+        Ok(Search::Skipped(reason)) => eprintln!("layout: search skipped ({reason})"),
+        Ok(Search::Done {
+            before,
+            after,
+            searched,
+            edges,
+            source,
+        }) => {
+            let scope = if edges {
+                "node and edge order"
+            } else {
+                "node order only: linkStyle/~~~ present"
+            };
+            eprintln!("layout: crossings {before} -> {after} (searched {searched}, {scope})");
+            if let Some(source) = source {
+                mmx::emit::write_atomic(input, source.as_bytes()).map_err(|e| {
+                    eprintln!("mmx: {e:#}");
+                    ExitCode::from(1)
+                })?;
+                return Ok(Some(bytes));
+            }
+        }
+        Err(err) if err.kind == mmx::render::RENDERER_FAILED => {
+            eprintln!(
+                "mmx: renderer failed on this input; the file was not changed ({})",
+                err.message
+            );
+            return Err(ExitCode::from(1));
+        }
+        Err(_) => {}
+    }
+    Ok(None)
+}
+
 /// Run a turn and map its outcome to the render exit codes.
-fn finish_render(job: &RenderJob) -> ExitCode {
-    match run_render(job) {
+fn finish_render(job: &RenderJob, result: anyhow::Result<mmx::TurnResult>) -> ExitCode {
+    match result {
         Ok(result) => {
             if let Some(text) = &result.print {
                 let mut stdout = std::io::stdout().lock();
@@ -219,6 +292,10 @@ fn finish_render(job: &RenderJob) -> ExitCode {
                     ExitCode::from(2)
                 }
             }
+        }
+        Err(e) if e.downcast_ref::<mmx::RendererFailed>().is_some() => {
+            eprintln!("mmx: renderer failed on this input; the file was not changed ({e:#})");
+            ExitCode::from(1)
         }
         Err(e) => {
             eprintln!("mmx: {e:#}");
