@@ -6,7 +6,7 @@ All notable changes to mmx are documented here. This follows [Keep a Changelog](
 
 ### Added
 
-- `adapters/codemap`: a skill and reference tool (`codemap.py`, standard library only) for drawing bounded codebase maps—neighborhood, path, impact, or changeset—as flowcharts the human corrects in the cockpit, with an example Rust indexer and three maps of mmx itself.
+- `adapters/codemap`: a skill for explaining a code change as one picture in four layers—topic, the code involved at function level with one line each, how each unit changes, and the human's open decisions—with the first screen saying what the human must do and what Send means, every edge anchored to a `path:line@commit`, Korean labels by default, and a worked example of an mmx commit in English and Korean. `codemap.py` (standard library only) selects candidates for the code layer; `example/index_rust.py` is a small Rust indexer; the skill documents the `graph.v2` facts an index should supply.
 
 ## [0.4.2] - 2026-10-08
 

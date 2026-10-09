@@ -1,0 +1,71 @@
+flowchart TD
+    T["Topic: your cockpit edit now wakes me (mmx wait), I can answer<br/>with a note, and every window shows the whole history.<br/>Check that this loop is drawn right — nothing left to decide"]
+
+    main["mmx.main<br/>parses the CLI and runs note / wait (changed)<br/>render and serve only → note and wait too"]
+    default_job["mmx.default_job<br/>builds the turn job with sibling outputs and log (moved+changed)<br/>serve-private job() → shared in lib, now with the log path"]
+    run_render["mmx.run_render_bytes / log_turn<br/>commits render results and logs the turn (changed)<br/>state commit only → turn log appended too"]
+    entry_line["turnlog.entry_line<br/>serializes one versioned turn record (added)<br/>absent → JSONL entry with diff and note"]
+    append["turnlog.append<br/>writes turns safely across processes (added)<br/>absent → locked append with rotation"]
+    apply_turn["serve.apply_turn<br/>accepts a browser edit or note (changed)<br/>local sequence bump → log-synced turn"]
+    sync_log["serve.sync_log<br/>folds unseen log entries into live state (added)<br/>absent → external turns wake subscribers"]
+    history_value["serve.history_value<br/>reduces the full log for the page (added)<br/>absent → history response with summaries"]
+    render_history["page.renderHistory<br/>shows every recorded turn newest first (changed)<br/>this window's turns only → whole log via GET /history"]
+    run_wait["turnlog.run_wait<br/>waits for an unanswered human turn (added)<br/>absent → log polling and stable-edit fallback"]
+    pending_human["turnlog.pending_human<br/>selects human turns after the last reply (added)<br/>absent → unanswered human suffix"]
+
+    poll["serve.poll<br/>checks the file and the turn log every 300 ms (changed)<br/>file mtime only → folds other processes' turns in too"]
+
+    D1["Decided (turn 3): agent if serve is live, human otherwise<br/>question: who is credited for a direct file edit?<br/>options: context-based (chosen) / always human / always agent<br/>impact: attribution in history; undo: yes"]
+
+    %% T -> main: src/main.rs:148@3af221a
+    T -->|"CLI note or wait"| main
+    %% T -> apply_turn: src/serve.rs:378@3af221a
+    T -->|"browser edit or note"| apply_turn
+    %% T -> render_history: src/serve_page.html:110@3af221a
+    T -->|"history view"| render_history
+    %% main -> default_job: src/main.rs:149@3af221a
+    main -->|"note job"| default_job
+    %% main -> run_render: src/main.rs:151@3af221a
+    main -->|"forced note turn"| run_render
+    %% main -> run_wait: src/main.rs:154@3af221a
+    main -->|"input and timeout"| run_wait
+    %% apply_turn -> default_job: src/serve.rs:600@3af221a
+    apply_turn -->|"human job and note"| default_job
+    %% apply_turn -> run_render: src/serve.rs:602@3af221a
+    apply_turn -->|"source bytes"| run_render
+    %% apply_turn -> sync_log: src/serve.rs:606@3af221a
+    apply_turn -->|"new logged turn"| sync_log
+    %% run_render -> entry_line: src/lib.rs:192@3af221a
+    run_render -->|"committed diff and source hash"| entry_line
+    %% entry_line -> append: src/lib.rs:227@3af221a
+    entry_line -->|"serialized log line"| append
+    %% append -> sync_log: src/serve.rs:207@3af221a
+    append -->|"new JSONL entries"| sync_log
+    %% append -> history_value: src/serve.rs:553@3af221a
+    append -->|"durable turn log"| history_value
+    %% history_value -> render_history: src/serve_page.html:113@3af221a
+    history_value -->|"GET /history entries"| render_history
+    %% run_wait -> pending_human: src/turnlog.rs:243@3af221a
+    run_wait -->|"all valid entries"| pending_human
+    %% run_wait -> run_render: src/turnlog.rs:253@3af221a
+    run_wait -->|"stable direct edit without serve"| run_render
+    %% poll -> sync_log: src/serve.rs:264@3af221a
+    poll -->|"every tick"| sync_log
+    %% sync_log -> render_history: src/serve.rs:189@3af221a (bump) -> src/serve_page.html:187-190@3af221a (EventSource reload)
+    sync_log -->|"SSE seq → page reloads history"| render_history
+    %% run_wait -> D1: src/turnlog.rs:251@3af221a
+    run_wait -.->|"no serve: human"| D1
+    %% poll -> D1: src/serve.rs:287-288@3af221a
+    poll -.->|"serve live: agent"| D1
+
+    classDef topic fill:#fff3bf,stroke:#e67700,stroke-width:3px
+    classDef add fill:#e6fcf5,stroke:#0ca678
+    classDef change fill:#e7f5ff,stroke:#1971c2
+    classDef remove fill:#fff5f5,stroke:#c92a2a,stroke-dasharray:4 2
+    classDef faded fill:#f8f9fa,stroke:#ced4da,color:#868e96
+    classDef decide fill:#fff0f6,stroke:#c2255c,stroke-width:2px
+    classDef decided fill:#f8f9fa,stroke:#adb5bd,color:#495057
+    class T topic
+    class main,run_render,apply_turn,poll,default_job,render_history change
+    class entry_line,append,sync_log,history_value,run_wait,pending_human add
+    class D1 decided

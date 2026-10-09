@@ -1,210 +1,198 @@
 ---
 name: mmx-codemap
-description: "Use when an agent should draw or update a bounded codebase map as a Mermaid flowchart in mmx, so a human can correct dependencies, labels, omissions, and the next area to expand in the mmx cockpit."
+description: "Use when an agent wants to explain a code change or ask a human to decide something about code, as one mmx picture: the topic, only the code involved (function level, one line each), how each unit changes, and the human's decision points. The human answers or corrects on the picture in the mmx cockpit."
 ---
 
-# Codebase maps in the mmx cockpit
+# A code conversation as one picture
 
-Draw the part of a codebase that answers the current turn. A codemap is not a
-fixed architecture level or a complete repository dump: every turn chooses a
-fresh focus, selects the useful neighborhood or paths, reduces it to a readable
-picture, and uses the human's cockpit edits to choose the next focus.
+A codemap is not a dependency graph. It is one conversation the agent wants
+to have with the human about code, drawn as four layers in a single
+flowchart. The dependency graph is only raw material for the second layer.
 
-This skill extends the repository's `mmx` skill. Follow that skill's render,
-wait, note, error-repair, generated-file, and one-renderer rules. In particular,
-edit only `.mmd`; show the SVG produced by `mmx`; never put these maps in
-Mermaid `subgraph` blocks. The pinned renderer makes subgraphs extremely wide
-and can fail on large maps.
+This skill extends the repository's `mmx` skill: follow its render, wait,
+note, error-repair, and one-renderer rules. Edit only `.mmd`; show only the
+SVG that `mmx` produced; never use `subgraph` (the pinned renderer makes
+subgraphs very wide).
 
-## Pipeline
+## The four layers
 
-1. Read the question and the latest mmx diff.
-2. Form the focus set, in this order: files or symbols named in the turn; files
-   in the current git diff; nodes annotated by the human with `expand`,
-   `explain`, or `펼쳐 줘`; otherwise entry points such as `main`, binaries,
-   handlers, or public dispatch functions.
-3. Choose one selection strategy from the table below. Selection is per turn;
-   do not preserve an old zoom level merely because it was drawn previously.
-4. If the selection exceeds the target, apply the reductions in the exact order
-   below. Splitting is the last resort.
-5. Write an idiomatic `flowchart LR`, render it with `mmx render ... --by
-   agent --note "..."`, and invite the human to correct it with `mmx serve`.
-6. Read the next diff as graph feedback, update `.mmx/codemap.json`, verify
-   claims against source, and repeat from the new focus.
+| Layer | What it is | How it is drawn | Limits |
+| --- | --- | --- | --- |
+| 1. Topic | One sentence, from the human's point of view, saying what this picture is about | One node `T`, declared first, `class T topic` | Exactly one, ≤ 40 characters |
+| 2. Code involved | Only the code that takes part in the topic, at function, type, or module level (not files). Each node carries one line saying what it does | Label `pkg.Func<br/>what it does`; `class … add` / `change` / `remove` by layer 3; nodes that are only context get `class … faded` | ≤ 12 nodes; ≤ 3 faded |
+| 3. How it changes | For each code node: added, changed, moved, or removed, plus a before→after line | Suffix `(added)`, `(changed)`, `(moved)`, `(removed)` on the label; before→after on the edge label or as the label's last line; unchanged nodes say `(as is)`; planned work says `(to change)` | — |
+| 4. Decisions | Only what the human must decide for the work to finish: the question, the options, the impact, and whether it can be undone | Rectangle `D1["Decide: …"]`, `class D1 decide`; dashed edges from the affected code nodes **to** the decision (`code -.-> D1`) | ≤ 3 nodes, ≤ 4 label lines |
 
-## Question to strategy
+**The first screen tells the human what to do.** The topic node's first
+lines (before the topic sentence itself, separated by `—`) always say, in the
+reader's language: (1) *what you must do* — `없음 (확인용, 닫아도 됨)`, `확인만`,
+or `결정 N개`; (2) *reading order* — yellow box → colored boxes (green added,
+blue changed, gray border context) → pink decisions / gray finished
+decisions; (3) *what Send means* — fix wrong or missing links on the picture
+and press Send, and the agent answers next turn. With zero open decisions,
+say explicitly that the picture is for checking and may be closed. The turn
+note repeats line (1) and (3). A human who opens the cockpit and asks "so
+what am I supposed to do?" means this block was missing.
 
-| Question or task | Strategy | Selection |
-| --- | --- | --- |
-| “What is around this file/symbol?” or “How does this flow?” | `neighborhood` | Both incoming and outgoing edges, grown one hop at a time. Start with 1; use 2 on the next expansion or when explicitly useful. If hop 2 would cross a hard cap, retain hop 1 and attach package summaries for hop 2. |
-| “How does A reach B?” | `path` | The k shortest directed paths between exactly two focus nodes. The reference script uses `--hops` as k. |
-| “What breaks or must change if this changes?” | `impact` | Reverse reachability from the focus, bounded by `--hops`. |
-| “Explain/review this change.” | `changeset` | Files in the git diff as focus plus one hop in both directions. |
+Edges say why two nodes are connected: the data, event, or call that flows
+(`-->|"request.created event"|`). Do not write reference counts.
 
-The host supplies the focus ids. The script does not inspect git or source to
-guess them.
+Write every label — topic, roles, before→after, edge labels, decisions —
+in the reader's language, Korean unless the human asked otherwise;
+identifiers (`serve.apply_turn`, `GET /history`) stay exactly as in the
+code. `example/mmx-self/turn-log-change.ko.mmd` is the Korean form of the
+worked example.
 
-## Size and reductions
+Use `flowchart TD`. Declare nodes in reading order: topic, code in flow
+order, decisions. Labels are 2–4 lines using `<br/>`; replace `"` with `'`,
+drop newlines, leave `&`, `<`, `>` raw (the renderer does not decode
+entities). Whole picture: ≤ 16 nodes and ≤ 20 edges. If the topic needs
+more, split the topic into two pictures, never shrink the picture with
+summaries.
 
-Target at most 25 nodes and 40 edges per picture. Never exceed the hard cap of
-40 nodes and 60 edges while growing a neighborhood. If hop 1 itself exceeds a
-hard cap, use that real one-hop selection and reduce it. If adding hop 2 would
-exceed a hard cap, keep hop 1, replace hop-2 nodes with package summaries
-attached to the hop-1 ring, and stop expanding. The report records
-`"hops_used": 1` and `"hop2_summarized": true` for that case.
+```mermaid
+flowchart TD
+    T["Topic: let a human hand task be a board node<br/>that can be opened and closed"]
+    svc_create["request.Service.CreateRequest<br/>records the created event, deterministic id (added)"]
+    ws_snapshot["workspace.Snapshot<br/>adds requests[] to the projection (changed)"]
+    T --> svc_create
+    svc_create -->|"request.created event"| ws_snapshot
+    D1["Decide: deploy live now or hold?<br/>impact: a few seconds of proxy downtime<br/>undo: previous binary kept, journal is append-only"]
+    ws_snapshot -.-> D1
+    classDef topic fill:#fff3bf,stroke:#e67700,stroke-width:3px
+    classDef add fill:#e6fcf5,stroke:#0ca678
+    classDef change fill:#e7f5ff,stroke:#1971c2
+    classDef remove fill:#fff5f5,stroke:#c92a2a,stroke-dasharray:4 2
+    classDef faded fill:#f8f9fa,stroke:#ced4da,color:#868e96
+    classDef decide fill:#fff0f6,stroke:#c2255c,stroke-width:2px
+    classDef decided fill:#f8f9fa,stroke:#adb5bd,color:#495057
+    class T topic
+    class svc_create add
+    class ws_snapshot change
+    class D1 decide
+```
 
-When a selected graph is above either target, apply these reductions in order.
-Re-check both targets after every applied step and stop immediately when the
-picture fits; report only steps that actually changed the picture.
+## Procedure, every turn
 
-1. **Fold bounded hubs.** Compute degree in the selected graph. The threshold
-   is `max(p90, 2 * median)`, and at most `ceil(10% of selected nodes)`
-   non-focus hubs may be folded (highest degree first, then stable id). A folded
-   hub remains as a label-only `hub (N refs)` node. Keep any edge between it and
-   a focus node, and keep protected path edges; remove only its other edges. A
-   focus node is always drawn normally. The report includes the threshold and
-   folded ids. After this and every later reduction, remove non-focus nodes
-   with no remaining edge and report their ids in `pruned_orphans`.
-2. **Fold distant rings.** Compute hop distance from the focus set. Starting at
-   the maximum distance and moving inward, replace two or more nodes in each
-   package with `pkg/* (k files)`, redirecting and merging edges. Strip the
-   common directory prefix of all selected nodes, then use the first directory
-   below it as the package; if one package still contains more than half the
-   nodes, use two directory levels. Files directly under the stripped root are
-   in `(root)`. Fold ring by ring and package by package, re-checking both
-   targets after each fold. One summary may never contain more than half of
-   the selected non-focus nodes, and a one-file summary is forbidden. Stop as
-   soon as both targets are met. Never fold ring 1 for a `neighborhood` or
-   `changeset`, and never fold nodes on a returned `path`.
-3. **Drop low-weight non-focus edges.** Remove the smallest `count` first until
-   the edge target is met. Focus-incident edges are protected, as are all edges
-   on a returned `path`. For `impact`, protect a shortest reverse path from
-   every reached node back to the focus. If the focus alone has more incident
-   edges than the picture can contain, keep the highest-weight deterministic
-   subset that fits both targets (`min(node target - 1, edge target)` for one
-   focus), breaking ties by stable edge id, and report how many focus edges
-   were kept and hidden. If that leaves edge capacity, restore the
-   highest-weight dropped non-focus edges whose endpoints still survive.
-4. **Split.** Only if those reductions still cannot meet the target, write
-   part 1 to `--out` and companions as `<out-stem>-part2.mmd`,
-   `<out-stem>-part3.mmd`, and so on. Explain the reason in the mmx turn note.
-   Splitting preserves every retained edge, and every picture contains at
-   least one focus node.
+1. **Write the topic first.** One to three lines, from the human's side:
+   what they can now do, and what they are being asked to judge in this
+   picture (`Topic: your cockpit edit now wakes me, I can answer with a
+   note, every window shows the whole history — check that this loop is
+   drawn right`), not `Topic: close the loop`. No topic, no picture.
+2. **Select the code.** Sources: the current `git diff` (a change in progress
+   or just made), or a host index (`graph.json`, see below) queried with
+   `codemap.py --strategy neighborhood|path|impact|changeset`. Keep a unit
+   only if the topic sentence's verbs and nouns touch it. Go down to
+   functions and types, not whole files. For every unit you keep, look one
+   hop at its callers (`grep -n 'name('`) and keep the caller that carries
+   data across a process or file boundary (a poller, a reader, an HTTP
+   handler); without it the human cannot see how one side reaches the other.
+   Name each node by the symbol that actually changed (`run_render_bytes`,
+   not a shorter name you invented).
+3. **Say what each unit does**, one line. Source order: its doc comment's
+   first sentence, then the signature, then its body. When the source is in
+   the repository, read it and write a verified line; `?` is only for a
+   line you could not verify (source missing or generated), and the note
+   says why.
+4. **Mark how each unit changes.** Read add/remove/change from the hunks. A
+   unit that existed elsewhere before is `(moved)` or `(moved+changed)`,
+   not `(added)`; check `git diff -M` and the old file before calling
+   anything new.
+   Write before→after as a sentence a person reads (`projects gates only →
+   projects gates and requests`).
+5. **Verify every edge before rendering.** For each edge, find the line
+   where the data, event, or call actually crosses, and record it as a
+   Mermaid comment next to the edge, naming the revision the line belongs
+   to: `%% run_wait -> default_job: src/turnlog.rs:252@3af221a`. An edge you
+   cannot point to a line for is not drawn. The same rule applies to edges
+   the human adds.
+6. **Keep only real decisions.** Make a decision node only when (a) two or
+   more sound implementations exist and one must be picked, (b) there is an
+   external effect, cost, or something hard to undo, or (c) the human's
+   rules or taste change the outcome. Label: question / options / impact /
+   undo. One option is not a decision; it is layer 3. Decisions already made
+   by agents or operators are not drawn.
+7. **Render with a note** that states the topic and one ask. Render at most
+   twice per turn (once, plus one fix if the exit is 2); do the reading
+   before, not between, renders. Read only the diff hunks and the bodies of
+   the units you draw (`sed -n` on line ranges), never whole files outside
+   them, and end the note with the list of files and line ranges you read:
+   `mmx render map.mmd --by agent --note "<topic>. Please answer D1 by
+   editing its text, or fix wrong links on the picture."` Without a decision
+   node, ask the human to fix wrong or missing code.
+8. **Send only pictures that ask something.** A picture with zero open
+   decisions is for your own review (or a record in the turn log); do not
+   open a cockpit for it or ask the human to look. A human shown such a
+   picture rightly asks what you wanted to talk about. If the topic has
+   nothing to decide, say so in a note and move on.
+9. **Read the human's turn** (diff v2 from `mmx wait`):
 
-Summarize hidden information in one human-readable Mermaid comment, for
-example: `%% hidden: 3 hubs (api/file_00.rs 61 refs, …), 118 low-weight edges,
-9 packages folded (ring 2)`.
+   | Human edit | Meaning and response |
+   | --- | --- |
+   | Label of a `D*` node changed | Their answer (an option or free text). Next turn: update layer 3, set `class D1 decided` and relabel it `Decided (turn N): <the rule exactly as the human stated it>`, keeping the question and the chosen option readable — a reader of the final picture must still see what was decided; never delete it. Record it in memory. |
+   | Code node removed | "Not part of this topic." Add to `omitted`; do not draw it again for this topic. |
+   | Code node label changed | A correction of what it does. Store in `aliases`; if it disagrees with the source, ask in the note with file:line. If it replaces a `?` line, drop the `?`. |
+   | Edge added or removed | A claim about a connection. Verify in source; keep it if true, otherwise answer with evidence. |
+   | Note only | A question. Answer with `mmx note` or a redrawn picture. |
+   | `moved` entries | Layout effects; ignore. |
 
-## Drawing contract
+10. Repeat from step 1 with the next topic. A new topic is a new picture.
 
-- Start with `flowchart LR`; never use `subgraph`.
-- Declare focus nodes before all other nodes so they tend to land on the left.
-- Derive absent ids from paths by replacing every non-alphanumeric character
-  with `_`: `src/serve.rs` becomes `src_serve_rs`. Prefix a derived Mermaid
-  reserved word (`end`, `subgraph`, `graph`, `flowchart`, `style`, `class`,
-  `classDef`, `click`, `linkStyle`, `direction`, or `default`) with `n_`.
-  Encode a non-ASCII run as `_x<hex>` using its first code point. If two paths
-  still collide, append `_` plus the first six hex digits of SHA-1(path).
-- Keep labels as short paths, including the package prefix. Package membership
-  is conveyed by that prefix, not by containment. Truncate long paths in the
-  middle (`pkg/…/file.rs`). In quoted labels replace newlines with spaces and
-  `"` with `'`; leave `&`, `<`, and `>` raw because the pinned renderer does
-  not decode HTML entities.
-- Draw `import` and `call` with `-->`. Draw `dynamic` and `test` with `-.->`;
-  label tests `test`, or `test ×N` when the count is greater than one. Show
-  count on the other edge kinds when it is greater than one.
-- Use `classDef focus`, `hub`, `folded`, and `external`. External dependencies
-  use the `(( ))` shape.
+## Memory
 
-## Persistent human memory
-
-Store only interaction memory—not source text—in `.mmx/codemap.json`:
+`.mmx/codemap.json` holds only interaction memory, never source text:
 
 ```json
 {
-  "aliases": {"src_serve_rs": "cockpit server"},
-  "omitted": ["src_legacy_rs"],
-  "last": {
-    "focus": ["src_serve_rs"],
-    "strategy": "neighborhood",
-    "reductions": []
-  }
+  "aliases": {"ws_snapshot": "workspace projection"},
+  "omitted": ["archtest"],
+  "decisions": {"D1": {"question": "deploy live now or hold?", "answer": "now", "status": "decided", "turn": 3}},
+  "last": {"topic": "…", "nodes": ["svc_create", "ws_snapshot"]}
 }
 ```
 
-`aliases` are human-renamed labels keyed by stable node id. `omitted` contains
-ids the human deleted and must be filtered before selection. `last` records the
-last focus, strategy, and applied reduction reports. Preserve aliases and
-omissions across turns.
+## Facts the host should supply (index contract, `graph.v2`)
 
-## Read cockpit edits
-
-Read diff v2 from `mmx wait` using the base mmx skill:
-
-| Human edit | Interpretation and response |
-| --- | --- |
-| Turn-level `note` names an id, label, or path with `expand`, `explain`, or `펼쳐 줘` | Resolve that reference against the current nodes and make it the next focus. There is no per-node note in diff v2. |
-| Node removed | Add its id to `omitted`; keep it out of later selections. If it is a `pkg/* (k files)` summary, add its member file ids instead; the script expands a remembered summary id when loading memory. |
-| Node label changed | Store the new label in `aliases`. For a hub or summary, strip the generated ` (N refs)` or `/* (k files)` suffix first; do not store an alias for a generated summary id. |
-| Edge added | Treat it as a dependency claim. Verify it in source; keep it if supported, otherwise ask in the turn note. |
-| Edge removed | If either endpoint also appears in `nodes.removed`, it is a consequence of deleting that node. Otherwise treat it as “should not depend,” verify the dependency, and propose a concrete decoupling task rather than pretending the code already changed. |
-| Edge label or style changed | Treat it as the human's annotation. Preserve it in interaction notes/aliases; do not rewrite the indexed dependency graph. |
-| Node shape changed | Treat it as the human's annotation. Preserve it in interaction notes/aliases; do not reinterpret the node kind or change the graph. |
-| “Why connected?” | Answer in the mmx note with file/line evidence; do not invent a reason. |
-| `moved` entries | Ignore them; they are layout effects, not human graph edits. |
-
-A note with no graph change is still a question and needs an answer. Read the
-single top-level `note`, then correlate its references with `nodes`, `edges`,
-and `source_hunks`; do not look for a note field inside a node entry.
-
-## Index contract and reference command
-
-Indexing belongs to the host, not this skill. Any index is acceptable: a
-Mermaid graph from another tool converted to JSON, grep-derived facts, a
-language server, or the example Rust scanner. Feed the reference script:
+The four layers need facts that are cheaper to compute outside the agent.
+Any host index may provide them; `example/index_rust.py` provides the subset
+it can for a Rust crate. Missing fields are filled by the agent and marked
+`?` (roles) or asked about in the note.
 
 ```json
-{
-  "nodes": [{"id": "src_serve_rs", "path": "src/serve.rs", "kind": "file", "refs": 12}],
-  "edges": [{"from": "src_serve_rs", "to": "src_emit_rs", "kind": "call", "count": 3}]
-}
+{"version": 2,
+ "nodes": [{"id": "ws_snapshot", "kind": "function", "symbol": "workspace.Snapshot", "path": "src/workspace.rs", "span": [210, 290],
+            "layer": "projection", "role": "adds requests[] to the projection", "role_source": "doc", "tested_by": ["src/workspace_test.rs"]}],
+ "edges": [{"from": "req_replay", "to": "ws_snapshot", "kind": "data", "symbols": ["Ref"], "why": "restored state enters the projection", "span": [233, 233]}],
+ "changeset": [{"node": "ws_snapshot", "op": "change", "before": "projects gates only", "after": "projects gates and requests", "hunks": ["@@ -210,4 +210,20 @@"], "commit": "abc1234"}],
+ "decisions": [{"id": "D1", "question": "deploy live now or hold?", "options": ["now", "hold"], "impact": "seconds of proxy downtime", "reversible": "binary yes; journal append-only", "status": "open", "decided_by": "human", "board": "gate:…"}]}
 ```
 
-`id` may be omitted and will be derived from `path`. Node kinds are `package`,
-`file`, `symbol`, or `external`; edge kinds are `import`, `call`, `test`, or
-`dynamic`.
+- `nodes[].kind`: `function`, `type`, `module`, `file`, `external`.
+  `layer`: `kernel`, `projection`, `adapter`, `cockpit`, `test`.
+  `role_source`: `doc`, `signature`, `agent`, `human`.
+- `edges[].kind`: `call`, `import`, `data`, `event`, `test`; `symbols` are the
+  names that cross the edge; `why` is a short phrase.
+- `changeset[].op`: `add`, `remove`, `change`, `move`; `planned: true` for
+  work not done yet.
+- `decisions[].decided_by`: `human` (draw it) or `operator` (do not draw it).
+- Version 1 files (`nodes[].refs`, `edges[].count`, no `version`) still load;
+  they only support step 2.
 
-Run from the project root:
+`codemap.py` selects candidates for layer 2 (`neighborhood`, `path`,
+`impact`, `changeset`) and writes a flowchart plus a JSON report. Treat its
+output as the candidate list, not the picture: pass `--max-nodes 12
+--max-edges 20`, then write the four-layer picture yourself from those
+candidates. Use the topic to select, not an algorithm to shrink.
 
 ```bash
-python3 adapters/codemap/codemap.py graph.json \
-  --focus src_serve_rs \
-  --strategy neighborhood \
-  --hops 1 \
-  --memory .mmx/codemap.json \
-  --out cockpit-flow.mmd
-mmx render cockpit-flow.mmd --by agent \
-  --note "Cockpit turn flow around src/serve.rs; 1-hop neighborhood"
+python3 adapters/codemap/example/index_rust.py src > .mmx/graph.json
+python3 adapters/codemap/codemap.py .mmx/graph.json --focus src_serve_rs --strategy neighborhood --hops 1 --max-nodes 12 --max-edges 20 --out .mmx/candidates.mmd
 ```
 
-The script prints one JSON report with `nodes`, `edges`, `strategy`, ordered
-`reductions`, `pruned_orphans`, and `split` filenames. When split, `nodes` and
-`edges` are the per-picture maxima. Path reports also contain `paths_found`.
-`n_` on an id records reserved-word protection, not a package. With `--lenient`,
-unknown edge endpoints are skipped and listed in `skipped_edges`; strict mode
-is the default. Defaults are target 25/40 and hard 40/60; they can be set with
-`--max-nodes`, `--max-edges`, `--hard-nodes`, and `--hard-edges`.
+## Worked example
 
-For a small Rust crate, build a file-level index with only the standard
-library:
-
-```bash
-python3 adapters/codemap/example/index_rust.py src > graph.json
-```
-
-The example scanner recognizes file modules, nested brace imports, inline
-`crate::`, `self::`, and `super::` paths, and the Cargo package name in binary
-targets. It labels references inside `#[cfg(test)]`/`mod tests` blocks as
-`test`; `src/main.rs` and `src/bin/*.rs` are binary roots rather than library
-modules. It is deliberately small; verify important edges in the actual source
-before answering the human.
+`example/mmx-self/turn-log-change.mmd` reconstructs a real mmx commit
+(`3af221a`, "close the conversation loop — wait, note, turn log") as one
+picture: the topic, the code units with what they do and how they changed,
+and the decision the human had to make. Read it before drawing your first
+picture.

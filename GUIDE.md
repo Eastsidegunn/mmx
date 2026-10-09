@@ -96,11 +96,13 @@ pi as the next turn, with a guard against runaway loops.
 ## Drawing a codebase
 
 [`adapters/codemap/`](adapters/codemap/SKILL.md) is a skill for agents that
-draw a bounded map of a codebase (a neighborhood, the paths from A to B, the
-impact of a change, or the current diff) as a flowchart the human corrects in
-the cockpit. It includes a reference reducer (`codemap.py`, standard library
-only) that keeps every picture under 25 nodes and 40 edges, a small Rust
-indexer, and three maps of mmx itself.
+explain a code change as one picture the human corrects in the cockpit: the
+topic, only the code involved (function level, one line each), how each unit
+changes, and the decisions the human still has to make. Pictures with nothing
+to decide stay with the agent. It includes a candidate selector
+(`codemap.py`, standard library only), a small Rust indexer, the facts an
+index should supply, and a worked example of an mmx commit in English and
+Korean.
 
 ## How a turn looks
 

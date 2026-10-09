@@ -13,8 +13,8 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 
-KINDS = {"package", "file", "symbol", "external"}
-EDGE_KINDS = {"import", "call", "test", "dynamic"}
+KINDS = {"package", "file", "symbol", "external", "function", "type", "module"}
+EDGE_KINDS = {"import", "call", "test", "dynamic", "data", "event"}
 STRATEGIES = {"neighborhood", "path", "impact", "changeset"}
 SAFE_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RESERVED_IDS = {
