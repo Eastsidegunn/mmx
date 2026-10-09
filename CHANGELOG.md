@@ -2,6 +2,12 @@
 
 All notable changes to mmx are documented here. This follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `pi-mmx` 0.2.0 (`adapters/pi`): the extension runs the turn routine itself (unanswered human turns added at prompt start, unsent `.mmd` edits sent with an automatic note when a run ends, held after Esc or an error), adds `mmx_note` and `/mmx send`, and ships the `mmx` and `mmx-codemap` skills generated from `skills/mmx` and `adapters/codemap` by `adapters/pi/scripts/derive-skills.mjs`, with a check that fails when they drift. See `adapters/pi/CHANGELOG.md`.
+
 ## [0.4.3] - 2026-10-10
 
 ### Added

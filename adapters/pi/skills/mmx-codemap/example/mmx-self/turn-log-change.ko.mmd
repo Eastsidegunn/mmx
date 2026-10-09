@@ -1,0 +1,70 @@
+flowchart TD
+    T["주제: 조종석에서 고치면 에이전트가 깨어나고(mmx wait), 에이전트는 메모로 답하며,<br/>어느 창을 열어도 전체 기록이 보인다.<br/>이 루프가 맞게 그려졌는지 봐 주세요 — 더 정할 것은 없음"]
+
+    main["mmx.main<br/>CLI를 읽고 note / wait를 실행 (변경)<br/>render·serve만 → note·wait 추가"]
+    default_job["mmx.default_job<br/>턴 작업(출력 파일·로그 경로)을 만든다 (이동+변경)<br/>serve 전용 job() → lib 공용, 로그 경로 포함"]
+    run_render["mmx.run_render_bytes / log_turn<br/>렌더 결과를 확정하고 턴을 기록 (변경)<br/>상태 저장만 → 턴 로그에도 추가"]
+    entry_line["turnlog.entry_line<br/>턴 한 건을 한 줄 레코드로 직렬화 (추가)<br/>없음 → diff·메모가 담긴 JSONL 줄"]
+    append["turnlog.append<br/>여러 프로세스가 안전하게 로그에 쓴다 (추가)<br/>없음 → 잠금 + 회전 있는 append"]
+    apply_turn["serve.apply_turn<br/>브라우저의 편집·메모 한 턴을 받는다 (변경)<br/>로컬 순번만 증가 → 로그와 동기화된 턴"]
+    sync_log["serve.sync_log<br/>아직 못 본 로그 항목을 실시간 상태에 접어 넣는다 (추가)<br/>없음 → 다른 프로세스의 턴이 구독자를 깨움"]
+    history_value["serve.history_value<br/>전체 로그를 페이지용 요약으로 줄인다 (추가)<br/>없음 → 요약이 붙은 history 응답"]
+    render_history["page.renderHistory<br/>기록된 모든 턴을 최신순으로 보여준다 (변경)<br/>이 창에서 본 턴만 → GET /history로 전체"]
+    run_wait["turnlog.run_wait<br/>답하지 않은 사람 턴을 기다린다 (추가)<br/>없음 → 로그 폴링 + 안정된 직접 편집 처리"]
+    pending_human["turnlog.pending_human<br/>마지막 답 이후의 사람 턴만 고른다 (추가)<br/>없음 → 미답 사람 턴 구간"]
+    poll["serve.poll<br/>300ms마다 파일과 턴 로그를 확인 (변경)<br/>파일 수정시각만 → 다른 프로세스의 턴도 접어 넣음"]
+
+    D1["결정됨 (턴 3): serve가 살아 있으면 agent, 아니면 human<br/>질문: 직접 파일 편집은 누구의 턴으로 기록하나?<br/>선택지: 상황 기반(선택) / 항상 human / 항상 agent<br/>영향: 기록의 작성자 표시 · 되돌림: 가능"]
+
+    %% T -> main: src/main.rs:148@3af221a
+    T -->|"CLI note 또는 wait"| main
+    %% T -> apply_turn: src/serve.rs:378@3af221a
+    T -->|"브라우저 편집·메모"| apply_turn
+    %% T -> render_history: src/serve_page.html:110@3af221a
+    T -->|"기록 보기"| render_history
+    %% main -> default_job: src/main.rs:149@3af221a
+    main -->|"note 작업"| default_job
+    %% main -> run_render: src/main.rs:151@3af221a
+    main -->|"메모만 있는 턴 강제"| run_render
+    %% main -> run_wait: src/main.rs:154@3af221a
+    main -->|"파일·대기시간"| run_wait
+    %% apply_turn -> default_job: src/serve.rs:600@3af221a
+    apply_turn -->|"human 작업 + 메모"| default_job
+    %% apply_turn -> run_render: src/serve.rs:602@3af221a
+    apply_turn -->|"원문 바이트"| run_render
+    %% apply_turn -> sync_log: src/serve.rs:606@3af221a
+    apply_turn -->|"새로 기록된 턴"| sync_log
+    %% run_render -> entry_line: src/lib.rs:192@3af221a
+    run_render -->|"확정된 diff·원문 해시"| entry_line
+    %% entry_line -> append: src/lib.rs:227@3af221a
+    entry_line -->|"직렬화된 로그 줄"| append
+    %% append -> sync_log: src/serve.rs:207@3af221a
+    append -->|"새 JSONL 항목"| sync_log
+    %% append -> history_value: src/serve.rs:553@3af221a
+    append -->|"보존된 턴 로그"| history_value
+    %% history_value -> render_history: src/serve_page.html:113@3af221a
+    history_value -->|"GET /history 항목"| render_history
+    %% run_wait -> pending_human: src/turnlog.rs:243@3af221a
+    run_wait -->|"유효한 항목 전부"| pending_human
+    %% run_wait -> run_render: src/turnlog.rs:253@3af221a
+    run_wait -->|"serve 없을 때 안정된 직접 편집"| run_render
+    %% poll -> sync_log: src/serve.rs:264@3af221a
+    poll -->|"매 tick"| sync_log
+    %% sync_log -> render_history: src/serve.rs:189@3af221a (bump) -> src/serve_page.html:187-190@3af221a (EventSource reload)
+    sync_log -->|"SSE 순번 → 페이지가 기록 재로드"| render_history
+    %% run_wait -> D1: src/turnlog.rs:251@3af221a
+    run_wait -.->|"serve 없음: human"| D1
+    %% poll -> D1: src/serve.rs:287-288@3af221a
+    poll -.->|"serve 살아 있음: agent"| D1
+
+    classDef topic fill:#fff3bf,stroke:#e67700,stroke-width:3px
+    classDef add fill:#e6fcf5,stroke:#0ca678
+    classDef change fill:#e7f5ff,stroke:#1971c2
+    classDef remove fill:#fff5f5,stroke:#c92a2a,stroke-dasharray:4 2
+    classDef faded fill:#f8f9fa,stroke:#ced4da,color:#868e96
+    classDef decide fill:#fff0f6,stroke:#c2255c,stroke-width:2px
+    classDef decided fill:#f8f9fa,stroke:#adb5bd,color:#495057
+    class T topic
+    class main,run_render,apply_turn,poll,default_job,render_history change
+    class entry_line,append,sync_log,history_value,run_wait,pending_human add
+    class D1 decided

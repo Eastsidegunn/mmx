@@ -1,17 +1,20 @@
 import { spawn as nodeSpawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { Type } from "typebox";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { deliveryKey, readTurnEntries, unansweredHumanEntries, type TurnEntry } from "./turns.ts";
+import { liveInstances, ownerAlive, readSidecar, updateSidecar, type Owner } from "./pending.ts";
 
 const MIN_MMX = [0, 4, 0] as const;
 const DEFAULT_WAIT_SECONDS = 120;
 const WATCH_INTERVAL_MS = 200;
 const BURST_DEBOUNCE_MS = 1000;
 const AUTO_TRIGGER_CAP = 3;
+const MAX_INJECT_DIAGRAMS = 8;
 
 type ExecResult = { stdout?: string; stderr?: string; code?: number | null; killed?: boolean; signal?: string | null };
 type ExecOptions = { cwd?: string; signal?: AbortSignal; timeout?: number };
@@ -61,6 +64,11 @@ type ServeState = { path: string; child: ChildProcess; url: string };
 const renderParams = Type.Object({
 	path: Type.String({ description: "Path to the Mermaid .mmd diagram (relative to the project)" }),
 	note: Type.Optional(Type.String({ description: "What changed and why; a non-empty note always makes an mmx turn" })),
+});
+
+const noteParams = Type.Object({
+	path: Type.String({ description: "Path to the Mermaid .mmd diagram (relative to the project)" }),
+	text: Type.String({ description: "Your message to the human; always makes an mmx turn without editing the diagram" }),
 });
 
 const waitParams = Type.Object({
@@ -156,15 +164,21 @@ function configPath(cwd: string): string {
 	return join(cwd, CONFIG_DIR_NAME, "mmx.json");
 }
 
-async function configuredDiagrams(cwd: string, trusted: boolean): Promise<string[]> {
-	if (!trusted) return [];
+type MmxConfig = { diagrams: string[]; autoRender: boolean; injectAtStart: boolean };
+
+async function readConfig(ctx: ExtensionContext): Promise<MmxConfig> {
+	const config: MmxConfig = { diagrams: [], autoRender: true, injectAtStart: true };
+	const trusted = typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : false;
+	if (!trusted) return config;
 	try {
-		const parsed = JSON.parse(await fs.readFile(configPath(cwd), "utf8")) as { diagrams?: unknown };
-		if (!Array.isArray(parsed.diagrams)) return [];
-		return parsed.diagrams.filter((value): value is string => typeof value === "string");
+		const parsed = JSON.parse(await fs.readFile(configPath(ctx.cwd), "utf8")) as Record<string, unknown>;
+		if (Array.isArray(parsed.diagrams)) config.diagrams = parsed.diagrams.filter((value): value is string => typeof value === "string");
+		if (typeof parsed.autoRender === "boolean") config.autoRender = parsed.autoRender;
+		if (typeof parsed.injectAtStart === "boolean") config.injectAtStart = parsed.injectAtStart;
 	} catch {
-		return [];
+		// No or unreadable config: defaults.
 	}
+	return config;
 }
 
 function isAborted(result: ExecResult, signal?: AbortSignal): boolean {
@@ -284,7 +298,19 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 	const diagrams = new Map<string, DiagramState>();
 	const serves = new Map<string, ServeState>();
 	const pendingTurns: HumanTurn[] = [];
+	// Pending agent edits: diagram path -> sha256 of the bytes the agent left
+	// unsent. Persisted in .mmx/pi-pending.json so a new session (/new, /resume,
+	// /reload, restart) never mistakes them for the human's edit.
 	const dirtyPaths = new Map<string, string>();
+	// Pending edits held back because the run was stopped (path -> sha).
+	const heldPaths = new Map<string, string>();
+	const delivered = new Set<string>();
+	const snapshots = new Map<string, Map<string, string>>();
+	let runStopped = false;
+	let runInProgress = false;
+	const owner: Owner = { pid: process.pid, id: randomUUID() };
+	liveInstances.add(owner.id);
+	let saveChain: Promise<void> = Promise.resolve();
 	let pendingTimer: NodeJS.Timeout | undefined;
 	let sessionStarted = false;
 	let mmxError: string | undefined;
@@ -335,18 +361,34 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 			return;
 		}
 		if (stat.size < state.offset) {
-			// mmx may compact a large log. Do not replay its retained history.
+			// mmx compacted the log (possibly while appending a new human turn):
+			// queue its unanswered human turns that were not delivered yet.
 			state.offset = stat.size;
 			state.tail = Buffer.alloc(0);
+			for (const entry of unansweredHumanEntries(await readTurnEntries(state.logPath))) {
+				if (!delivered.has(deliveryKey(state.path, entry))) pendingTurns.push({ path: state.path, entry, line: "" });
+			}
+		} else if (stat.size === state.offset) {
 			return;
+		} else {
+			await readAppended(state, stat.size);
 		}
-		if (stat.size === state.offset) return;
+		await refreshDirty(state.path);
+		if (sessionStarted && pendingTurns.length && !pendingTimer) {
+			pendingTimer = setTimeout(() => {
+				pendingTimer = undefined;
+				void flushHumanTurns();
+			}, debounceMs);
+		}
+	};
+
+	const readAppended = async (state: DiagramState, size: number) => {
 		const handle = await fs.open(state.logPath, "r");
 		try {
-			const length = stat.size - state.offset;
+			const length = size - state.offset;
 			const chunk = Buffer.alloc(length);
 			await handle.read(chunk, 0, length, state.offset);
-			state.offset = stat.size;
+			state.offset = size;
 			const bytes = Buffer.concat([state.tail, chunk]);
 			let start = 0;
 			for (;;) {
@@ -367,13 +409,6 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 			state.tail = bytes.subarray(start);
 		} finally {
 			await handle.close();
-		}
-		await refreshDirty(state.path);
-		if (sessionStarted && pendingTurns.length && !pendingTimer) {
-			pendingTimer = setTimeout(() => {
-				pendingTimer = undefined;
-				void flushHumanTurns();
-			}, debounceMs);
 		}
 	};
 
@@ -399,9 +434,18 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 		}
 	};
 
+	/** Marks a human turn as delivered to the model; false when it already was. */
+	const markDelivered = (path: string, entry: TurnEntry): boolean => {
+		const key = deliveryKey(path, entry);
+		if (delivered.has(key)) return false;
+		delivered.add(key);
+		return true;
+	};
+
 	const flushHumanTurns = async () => {
 		if (!pendingTurns.length) return;
-		const batch = pendingTurns.splice(0, pendingTurns.length);
+		const batch = pendingTurns.splice(0, pendingTurns.length).filter((turn) => markDelivered(turn.path, turn.entry));
+		if (!batch.length) return;
 		const summaries = batch.map((turn) => humanTurnMessage(lastContext?.cwd ?? dirname(turn.path), turn)).join("\n\n");
 		const details = { diagrams: [...new Set(batch.map((turn) => turn.path))], turns: batch.map((turn) => turn.entry) };
 		if (autoTriggerCount < AUTO_TRIGGER_CAP) {
@@ -449,26 +493,72 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 		return typeof mark.last?.source_sha256 === "string" ? mark.last.source_sha256 : undefined;
 	};
 
-	const refreshDirty = async (path: string): Promise<boolean> => {
-		if (!dirtyPaths.has(path)) return false;
-		try {
-			const current = await sourceSha256(path);
-			if (current === await committedSourceSha(path)) {
-				dirtyPaths.delete(path);
-				return false;
+	// Writes only this instance's entries; other owners' entries are kept as they are.
+	const savePending = (cwd = lastContext?.cwd) => {
+		if (!cwd) return saveChain;
+		const mine = [...dirtyPaths].map(([path, sha]) => [path, { sha, held: heldPaths.get(path) === sha || undefined, owner }] as const);
+		saveChain = saveChain.then(() =>
+			updateSidecar(cwd, (entries) => {
+				for (const [path, entry] of Object.entries(entries)) if (entry.owner?.id === owner.id) delete entries[path];
+				for (const [path, entry] of mine) entries[path] = entry;
+			}).catch(() => {
+				// Best effort: losing the sidecar only loses cross-session attribution.
+			}),
+		);
+		return saveChain;
+	};
+
+	/** Session start: take over entries whose owner is gone (crash, quit, /new, /reload). */
+	const loadPending = async (cwd: string) => {
+		await updateSidecar(cwd, (entries) => {
+			for (const [path, entry] of Object.entries(entries)) {
+				if (entry.owner?.id === owner.id || ownerAlive(entry.owner)) continue;
+				dirtyPaths.set(path, entry.sha);
+				if (entry.held) heldPaths.set(path, entry.sha);
+				entries[path] = { ...entry, owner };
 			}
-			dirtyPaths.set(path, current);
-			return true;
-		} catch {
-			return true;
+		}).catch(() => {});
+	};
+
+	/** Diagrams whose bytes are still another live pi's unsent edit (another process or instance). */
+	const foreignPending = async (cwd: string) => {
+		const paths = new Set<string>();
+		for (const [path, entry] of Object.entries(await readSidecar(cwd))) {
+			if (entry.owner?.id === owner.id || !ownerAlive(entry.owner)) continue;
+			if (await sourceSha256(path).then((sha) => sha === entry.sha, () => false)) paths.add(path);
 		}
+		return paths;
+	};
+
+	const setPending = async (path: string, sha: string | undefined) => {
+		if (sha === undefined ? !dirtyPaths.delete(path) : dirtyPaths.get(path) === sha) return;
+		if (sha !== undefined) dirtyPaths.set(path, sha);
+		await savePending();
+	};
+
+	/** True while the file still holds the bytes the agent left unsent. */
+	const refreshDirty = async (path: string): Promise<boolean> => {
+		const pending = dirtyPaths.get(path);
+		if (pending === undefined) return false;
+		let current: string;
+		try {
+			current = await sourceSha256(path);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") return true;
+			await setPending(path, undefined); // deleted or renamed: nothing left to send
+			return false;
+		}
+		if (current === pending && current !== await committedSourceSha(path)) return true;
+		// Sent since (by mmx_render, a bash render, or serve), or edited by the
+		// human after the agent: either way no longer the agent's pending edit.
+		await setPending(path, undefined);
+		return false;
 	};
 
 	const markDirty = async (path: string) => {
 		try {
 			const current = await sourceSha256(path);
-			if (current === await committedSourceSha(path)) dirtyPaths.delete(path);
-			else dirtyPaths.set(path, current);
+			await setPending(path, current === await committedSourceSha(path) ? undefined : current);
 		} catch {
 			// Validation already reported any relevant read/parse failure.
 		}
@@ -511,7 +601,7 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 		if (matches.length === 1) {
 			const entry = matches[0];
 			const entryDiff = entry.diff as Diff | undefined;
-			dirtyPaths.delete(path);
+			await setPending(path, undefined);
 			const previous = before.last;
 			if (note && entryDiff?.source_changed === false && previous?.by === "agent" && !previous.note && (previous.diff as Diff | undefined)?.source_changed === true) {
 				return `Your note was recorded as its own turn; the change itself had already been recorded by mmx serve: ${diffSummary(previous.diff as Diff | undefined)}`;
@@ -520,7 +610,7 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 			return `turn recorded with your note: ${diffSummary(entryDiff)}`;
 		}
 		if (matches.length > 1) {
-			dirtyPaths.delete(path);
+			await setPending(path, undefined);
 			return `mmx render appended ${matches.length} agent turns matching your note; inspect the turn log.`;
 		}
 		if (appended.length) return "mmx render appended turns, but none matched your note; inspect the turn log.";
@@ -542,7 +632,64 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 		const output = (result.stdout ?? "").trim();
 		if (!output) return "no human turn yet";
 		await advanceWatcherPastCurrentLog(path);
+		// Do not inject the turns the model has now seen again at the next prompt.
+		// mmx wait prints each turn's diff exactly as logged; match on it.
+		const printed = new Set(output.split(/\r?\n/).map((line) => {
+			try {
+				return JSON.stringify(JSON.parse(line));
+			} catch {
+				return "";
+			}
+		}));
+		for (const entry of unansweredHumanEntries(await readTurnEntries(siblingPath(path, "turns.jsonl")))) {
+			if (printed.has(JSON.stringify(entry.diff))) markDelivered(path, entry);
+		}
 		return output;
+	};
+
+	const note = async (path: string, text: string, ctx: ExtensionContext, signal?: AbortSignal) => {
+		if (signal?.aborted) throw abortedError();
+		if (!text.trim()) throw new MmxError("mmx_note needs a non-empty text; nothing was sent.");
+		await ensureMmx(ctx, signal);
+		if (signal?.aborted) throw abortedError();
+		const result = await exec(["note", path, "--", text], { cwd: ctx.cwd, signal });
+		if (isAborted(result, signal)) throw abortedError();
+		if (result.code === 2) throw formatParseError(await readDiff(path), result.stderr ?? "mmx could not parse the diagram");
+		if (result.code !== 0) throw commandError(result, "mmx note");
+		await setPending(path, undefined);
+		await trackDiagram(path, true);
+		const diff = await readDiff(path);
+		if (diff?.source_changed) return `note recorded, together with your unsent change: ${diffSummary(diff)}`;
+		return "note recorded";
+	};
+
+	type Preview = { changed: boolean; firstVersion: boolean; diff?: Diff; error?: MmxError; failure?: string };
+
+	/** Renders a temporary copy (with the current state) to see what committing would record; never commits. */
+	const previewRender = async (path: string, ctx: ExtensionContext, signal?: AbortSignal): Promise<Preview | "aborted"> => {
+		const tempDir = await fs.mkdtemp(join(tmpdir(), "pi-mmx-validate-"));
+		try {
+			const tempPath = join(tempDir, basename(path));
+			await fs.copyFile(path, tempPath);
+			const statePath = siblingPath(path, "state.json");
+			let firstVersion = false;
+			try {
+				await fs.copyFile(statePath, siblingPath(tempPath, "state.json"));
+			} catch {
+				// A missing state is the normal baseline case.
+				firstVersion = true;
+			}
+			const result = await exec(["render", tempPath, "--by", "agent", "--print-if-changed"], { cwd: ctx.cwd, signal });
+			if (isAborted(result, signal)) return "aborted";
+			if (result.code === 2) {
+				return { changed: false, firstVersion, error: formatParseError(await readDiff(tempPath), result.stderr ?? "mmx could not parse the diagram") };
+			}
+			if (result.code !== 0) return { changed: false, firstVersion, failure: commandError(result, "mmx render").message };
+			const changed = Boolean((result.stdout ?? "").trim());
+			return { changed, firstVersion, diff: changed ? await readDiff(tempPath) : undefined };
+		} finally {
+			await fs.rm(tempDir, { recursive: true, force: true });
+		}
 	};
 
 	const validateEdit = async (path: string, ctx: ExtensionContext, signal?: AbortSignal): Promise<string> => {
@@ -550,33 +697,17 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 		try {
 			await ensureMmx(undefined, signal);
 			if (signal?.aborted) return "[mmx] auto-render aborted.";
-			const tempDir = await fs.mkdtemp(join(tmpdir(), "pi-mmx-validate-"));
-			try {
-				const tempPath = join(tempDir, basename(path));
-				await fs.copyFile(path, tempPath);
-				const statePath = siblingPath(path, "state.json");
-				try {
-					await fs.copyFile(statePath, siblingPath(tempPath, "state.json"));
-				} catch {
-					// A missing state is the normal baseline case.
-				}
-				const result = await exec(["render", tempPath, "--by", "agent", "--print-if-changed"], { cwd: ctx.cwd, signal });
-				if (isAborted(result, signal)) return "[mmx] auto-render aborted.";
-				if (result.code === 2) {
-					const error = formatParseError(await readDiff(tempPath), result.stderr ?? "mmx could not parse the diagram");
-					return `[mmx] ${error.message}`;
-				}
-				if (result.code !== 0) return `[mmx] validation failed: ${commandError(result, "mmx render").message}`;
-				const changed = Boolean((result.stdout ?? "").trim());
+			const preview = await previewRender(path, ctx, signal);
+			if (preview === "aborted") return "[mmx] auto-render aborted.";
+			if (preview.error) {
 				await markDirty(path);
-				const stateExists = await fs.access(statePath).then(() => true).catch(() => false);
-				if (!changed && !stateExists) return "[mmx] valid; this will be the first version — call mmx_render with a note to send it";
-				const diff = changed ? await readDiff(tempPath) : undefined;
-				const summary = changed ? diffSummary(diff) : "no pending change";
-				return `[mmx] valid; pending change: ${summary} — call mmx_render with a note to send it`;
-			} finally {
-				await fs.rm(tempDir, { recursive: true, force: true });
+				return `[mmx] ${preview.error.message}`;
 			}
+			if (preview.failure) return `[mmx] validation failed: ${preview.failure}`;
+			await markDirty(path);
+			if (!preview.changed && preview.firstVersion) return "[mmx] valid; this will be the first version — call mmx_render with a note to send it";
+			const summary = preview.changed ? diffSummary(preview.diff) : "no pending change";
+			return `[mmx] valid; pending change: ${summary} — call mmx_render with a note to send it`;
 		} catch (error) {
 			if (error instanceof MmxError && error.message.includes("aborted")) return "[mmx] auto-render aborted.";
 			if (error instanceof MmxError && (error.message.includes("unavailable") || error.message.includes("required"))) {
@@ -585,6 +716,92 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 			}
 			return `[mmx] validation failed: ${error instanceof Error ? error.message : String(error)}`;
 		}
+	};
+
+	/** End of run: send an edit the agent left unsent, with an automatic note, unless it does not parse. */
+	const autoCommit = async (path: string, ctx: ExtensionContext, remind = true) => {
+		const rel = relativeDiagramPath(ctx.cwd, path);
+		let preview: Preview | "aborted";
+		try {
+			await ensureMmx(undefined, ctx.signal);
+			preview = await previewRender(path, ctx, ctx.signal);
+		} catch (error) {
+			notify(ctx, `mmx: could not send the edit to ${rel}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+			return;
+		}
+		if (preview === "aborted") return;
+		if (preview.error) {
+			const { line, column } = preview.error;
+			const location = line ? ` (line ${line}${column ? `, column ${column}` : ""})` : "";
+			notify(ctx, `mmx: ${rel} does not parse${location}; the edit was not sent to the human.`, "warning");
+			// Queued for the next prompt; pi cannot withdraw it if the file is fixed meanwhile.
+			if (remind) pi.sendMessage(
+				{
+					customType: "mmx-turn",
+					content: `Your last edit to ${rel} was not sent to the human because it did not parse when the run ended: ${preview.error.message} If the file still fails to parse, fix it, then call mmx_render with a note.`,
+					display: true,
+					details: { path, error: { kind: preview.error.kind, message: preview.error.message, line, column } },
+				},
+				{ deliverAs: "nextTurn" },
+			);
+			return;
+		}
+		if (preview.failure) {
+			notify(ctx, `mmx: could not send the edit to ${rel}: ${preview.failure}`, "warning");
+			return;
+		}
+		const summary = preview.changed ? diffSummary(preview.diff) : preview.firstVersion ? "first version" : "no semantic change";
+		try {
+			await render(path, `pi edited this diagram (automatic turn): ${summary}`, ctx, ctx.signal);
+			notify(ctx, `mmx: sent the edit to ${rel} with an automatic note.`, "info");
+		} catch (error) {
+			notify(ctx, `mmx: could not send the edit to ${rel}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+		}
+	};
+
+	/** Sends pending edits (end of run, shutdown, /mmx send); held edits only when `force`. */
+	const sendPending = async (ctx: ExtensionContext, options: { remind?: boolean; force?: boolean; only?: string } = {}) => {
+		for (const path of [...dirtyPaths.keys()]) {
+			if (options.only && path !== options.only) continue;
+			if (!(await refreshDirty(path))) continue;
+			if (!options.force && heldPaths.get(path) === dirtyPaths.get(path)) continue;
+			heldPaths.delete(path);
+			await autoCommit(path, ctx, options.remind ?? true);
+		}
+	};
+
+	/** Turn start: render a direct file edit as the human's turn (mmx wait) and collect unanswered human turns. */
+	const collectUnanswered = async (ctx: ExtensionContext) => {
+		const turns: HumanTurn[] = [];
+		const warnings: string[] = [];
+		const paths = [...diagrams.keys()];
+		try {
+			await ensureMmx(undefined, ctx.signal);
+		} catch {
+			return { turns, warnings }; // The tools explain a missing mmx when they are used.
+		}
+		const foreign = await foreignPending(ctx.cwd);
+		for (const path of paths.slice(0, MAX_INJECT_DIAGRAMS)) {
+			if (ctx.signal?.aborted) break;
+			if (foreign.has(path)) continue; // another pi's unsent edit: not the human's
+			const rel = relativeDiagramPath(ctx.cwd, path);
+			try {
+				if (await refreshDirty(path)) continue;
+				if (!(await fs.access(path).then(() => true, () => false))) continue;
+				const result = await exec(["wait", path, "--timeout", "0"], { cwd: ctx.cwd, signal: ctx.signal });
+				if (isAborted(result, ctx.signal)) break;
+				if (result.code !== 0 && result.code !== 3) {
+					warnings.push(`[mmx] could not check ${rel} for human turns: ${commandError(result, "mmx wait").message.replace(/\s+/g, " ")}`);
+				}
+				for (const entry of unansweredHumanEntries(await readTurnEntries(siblingPath(path, "turns.jsonl")))) {
+					if (markDelivered(path, entry)) turns.push({ path, entry, line: "" });
+				}
+			} catch (error) {
+				warnings.push(`[mmx] could not check ${rel} for human turns: ${(error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ")}`);
+			}
+		}
+		if (paths.length > MAX_INJECT_DIAGRAMS) warnings.push(`[mmx] checked ${MAX_INJECT_DIAGRAMS} of ${paths.length} tracked diagrams for human turns.`);
+		return { turns, warnings };
 	};
 
 	const startServe = async (path: string, ctx: ExtensionContext) => {
@@ -665,43 +882,92 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 		name: "mmx_render",
 		label: "mmx render",
 		description:
-			"Render an mmx Mermaid diagram after editing a .mmd file. Use mmx_render after every diagram edit, with a note explaining what changed and why; a non-empty note always makes a turn. Exit-2 parse errors are returned with line/column so you can fix the diagram.",
-		promptSnippet: "Render a Mermaid .mmd through mmx and report the human-edit diff",
+			"Send your edit of a Mermaid .mmd diagram to the human as one mmx turn, with a note saying what changed and why (a non-empty note always makes a turn). pi's edit/write tools only validate .mmd edits; call mmx_render once the edit is done. An edit left unsent is sent at the end of the run with an automatic note, but your own note is better. Human edits made in the mmx cockpit arrive on their own as mmx-turn messages. Exit-2 parse errors are returned with line/column so you can fix the diagram.",
+		promptSnippet: "Send a Mermaid .mmd edit to the human through mmx, with a note",
 		promptGuidelines: [
-			"Use mmx_render after editing any .mmd file, including a note saying what changed and why.",
-			"Use mmx_render's returned diff to understand the picture edit; suggest /mmx open to let the human edit the diagram in a browser.",
+			"After editing a .mmd diagram with edit or write (the mmx extension validates it), call mmx_render with a note saying what changed and why; use mmx_render too after a .mmd edit made through bash.",
+			"An mmx-turn message is the human's edit or question about a diagram: answer by editing the .mmd and calling mmx_render with a note, or with mmx_note when the diagram does not need to change.",
+			"Suggest /mmx open <path> so the human can see and edit the diagram in the local mmx cockpit; their changes arrive as mmx-turn messages without polling.",
 		],
 		parameters: renderParams,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			lastContext = ctx;
 			const path = absolutePath(ctx.cwd, params.path);
 			return { content: [textContent(await render(path, params.note, ctx, signal))], details: { path } };
 		},
 	});
 
 	pi.registerTool({
+		name: "mmx_note",
+		label: "mmx note",
+		description:
+			"Reply to the human about an mmx diagram without editing it (an answer, a question, a status). Always makes a turn the human sees in the mmx cockpit; unsent edits in the file become part of it. Parse errors are returned with line/column.",
+		promptSnippet: "Reply to the human about an mmx diagram without editing it",
+		promptGuidelines: ["Use mmx_note to answer a human's mmx-turn question when the diagram itself does not need to change."],
+		parameters: noteParams,
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			lastContext = ctx;
+			const path = absolutePath(ctx.cwd, params.path);
+			return { content: [textContent(await note(path, params.text, ctx, signal))], details: { path } };
+		},
+	});
+
+	pi.registerTool({
 		name: "mmx_wait",
 		label: "mmx wait",
-		description: "Wait for unanswered human edits to an mmx diagram. Returns human turn diff JSON, or `no human turn yet` after the timeout. Esc/abort cancels the mmx child process.",
+		description:
+			"Wait for unanswered human edits to an mmx diagram. Usually not needed: human turns arrive on their own as mmx-turn messages. Use it to block inside a run for the human's reply. Returns one diff JSON line per unanswered human turn (including turns already delivered as mmx-turn messages), or `no human turn yet` after the timeout. It refuses while you have an unsent .mmd edit (call mmx_render first). Esc/abort cancels the mmx child process.",
 		promptSnippet: "Wait for a human's mmx diagram edit",
 		parameters: waitParams,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			lastContext = ctx;
 			const path = absolutePath(ctx.cwd, params.path);
 			return { content: [textContent(await wait(path, params.timeoutSeconds, ctx, signal))], details: { path } };
 		},
 	});
 
+	// bash, and other tools whose input names a diagram, can change a tracked
+	// diagram too: snapshot before, compare after, and treat a change as the agent's edit.
+	const isEditTool = (name: string) => name === "edit" || name === "write";
+	pi.on("tool_call", async (event, ctx) => {
+		runInProgress = true; // tools run only inside a run, even if agent_start was missed
+		if (isEditTool(event.toolName) || event.toolName.startsWith("mmx_") || !diagrams.size) return;
+		if (event.toolName !== "bash") {
+			const input = JSON.stringify(event.input ?? {});
+			if (!input.includes(".mmd") && ![...diagrams.keys()].some((path) => input.includes(path) || input.includes(relativeDiagramPath(ctx.cwd, path)))) return;
+		}
+		const shas = new Map<string, string>();
+		for (const path of diagrams.keys()) shas.set(path, await sourceSha256(path).catch(() => ""));
+		snapshots.set(event.toolCallId, shas);
+	});
+
 	pi.on("tool_result", async (event, ctx) => {
-		if (event.toolName !== "edit" && event.toolName !== "write") return;
+		lastContext = ctx;
+		runInProgress = true;
+		if (!isEditTool(event.toolName)) {
+			const before = snapshots.get(event.toolCallId);
+			snapshots.delete(event.toolCallId);
+			if (!before) return;
+			const lines: string[] = [];
+			for (const [path, sha] of before) {
+				if ((await sourceSha256(path).catch(() => "")) === sha) continue;
+				const outcome = await validateEdit(path, ctx, ctx.signal);
+				lines.push(outcome.replace(/^\[mmx\] /, `[mmx] ${relativeDiagramPath(ctx.cwd, path)}: `));
+			}
+			if (!lines.length) return;
+			return { content: [...event.content, textContent(`\n${lines.join("\n")}`)], isError: event.isError };
+		}
 		if (event.isError) return;
 		const input = event.input as { path?: unknown };
 		if (typeof input.path !== "string" || !input.path.toLowerCase().endsWith(".mmd")) return;
 		const path = absolutePath(ctx.cwd, input.path);
 		const outcome = await validateEdit(path, ctx, ctx.signal);
+		await trackDiagram(path, true);
 		return { content: [...event.content, textContent(`\n${outcome}`)], isError: event.isError };
 	});
 
 	pi.registerCommand("mmx", {
-		description: "Open, stop, or inspect the local mmx Mermaid cockpit",
+		description: "Open, stop, or inspect the local mmx Mermaid cockpit, or send pi's unsent diagram edits",
 		handler: async (args, ctx) => {
 			lastContext = ctx;
 			const words = args.trim().split(/\s+/).filter(Boolean);
@@ -758,12 +1024,21 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 				notify(ctx, "Stopped mmx serve processes.", "info");
 				return;
 			}
+			if (action === "send") {
+				const target = words.length ? absolutePath(ctx.cwd, words.join(" ")) : undefined;
+				if (![...dirtyPaths.keys()].some((path) => !target || path === target)) {
+					notify(ctx, "No unsent agent edits.", "info");
+					return;
+				}
+				await sendPending(ctx, { force: true, only: target });
+				return;
+			}
 			if (action === "status") {
-				const lines = [...diagrams.keys()].map((path) => `${path}${serves.get(path)?.url ? ` — ${serves.get(path)?.url}` : ""}`);
+				const lines = [...diagrams.keys()].map((path) => `${path}${serves.get(path)?.url ? ` — ${serves.get(path)?.url}` : ""}${dirtyPaths.has(path) ? " (unsent agent edit)" : ""}`);
 				notify(ctx, lines.length ? lines.join("\n") : "No tracked mmx diagrams.", "info");
 				return;
 			}
-			notify(ctx, "Usage: /mmx open [path], /mmx stop [path], or /mmx status", "warning");
+			notify(ctx, "Usage: /mmx open [path], /mmx stop [path], /mmx send [path], or /mmx status", "warning");
 		},
 	});
 
@@ -774,17 +1049,77 @@ export function createMmxExtension(pi: ExtensionAPI, deps: MmxExtensionDeps = {}
 	pi.on("session_start", async (_event, ctx) => {
 		lastContext = ctx;
 		sessionStarted = true;
+		owner.session = (ctx as { sessionManager?: { getSessionId?: () => string } }).sessionManager?.getSessionId?.();
+		await loadPending(ctx.cwd);
+		for (const path of dirtyPaths.keys()) await trackDiagram(path, true);
 		try {
 			await ensureMmx(ctx);
 		} catch {
 			return;
 		}
-		for (const configured of await configuredDiagrams(ctx.cwd, typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : false)) {
+		for (const configured of (await readConfig(ctx)).diagrams) {
 			await trackDiagram(absolutePath(ctx.cwd, configured), true);
 		}
 	});
 
-	pi.on("session_shutdown", () => {
+	// Hook parity with mmx's Claude Code hooks: unanswered human turns, including
+	// ones made while pi was closed, are injected before the run that answers them.
+	// pi 0.82 emits before_agent_start only from prompt() (agent-session.js:881);
+	// a run started by the watcher's sendMessage(triggerTurn) does not fire it.
+	pi.on("before_agent_start", async (_event, ctx) => {
+		lastContext = ctx;
+		if (!diagrams.size || !(await readConfig(ctx)).injectAtStart) return;
+		const { turns, warnings } = await collectUnanswered(ctx);
+		if (!turns.length && !warnings.length) return;
+		const content = [...turns.map((turn) => humanTurnMessage(ctx.cwd, turn)), ...warnings].join("\n\n");
+		const details = {
+			source: "turn-start",
+			diagrams: [...new Set(turns.map((turn) => turn.path))],
+			turns: turns.map((turn) => turn.entry),
+			warnings,
+		};
+		return { message: { customType: "mmx-turn", content, display: true, details } };
+	});
+
+	pi.on("agent_start", () => {
+		runInProgress = true;
+	});
+
+	/** Holds pending edits instead of sending them (a stopped run, or pi closing mid-run). */
+	const holdPending = async (ctx: ExtensionContext, reason: string) => {
+		for (const path of [...dirtyPaths.keys()]) {
+			if (!(await refreshDirty(path)) || heldPaths.get(path) === dirtyPaths.get(path)) continue;
+			heldPaths.set(path, dirtyPaths.get(path) ?? "");
+			notify(ctx, `mmx: the edit to ${relativeDiagramPath(ctx.cwd, path)} was not sent because ${reason}; use /mmx send or ask pi to send it.`, "warning");
+		}
+		await savePending();
+	};
+
+	// agent_end can fire more than once per settled run (retries); the last one decides.
+	pi.on("agent_end", (event) => {
+		const last = [...(event.messages ?? [])].reverse().find((message) => message.role === "assistant") as { stopReason?: string } | undefined;
+		runStopped = last?.stopReason === "aborted" || last?.stopReason === "error";
+	});
+
+	pi.on("agent_settled", async (_event, ctx) => {
+		lastContext = ctx;
+		const stopped = runStopped;
+		runStopped = false;
+		runInProgress = false;
+		snapshots.clear(); // tool calls that never produced a result
+		if (!dirtyPaths.size || !(await readConfig(ctx)).autoRender) return;
+		if (stopped) await holdPending(ctx, "the run was stopped");
+		else await sendPending(ctx);
+	});
+
+	pi.on("session_shutdown", async (_event, ctx) => {
+		if (ctx) lastContext = ctx;
+		if (ctx && dirtyPaths.size && (await readConfig(ctx)).autoRender) {
+			if (runInProgress) await holdPending(ctx, "pi closed in the middle of a run");
+			else await sendPending(ctx, { remind: false });
+		}
+		await saveChain;
+		liveInstances.delete(owner.id);
 		sessionStarted = false;
 		if (pendingTimer) clearTimeout(pendingTimer);
 		pendingTimer = undefined;

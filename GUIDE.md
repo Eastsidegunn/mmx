@@ -91,10 +91,13 @@ call any model.
 ## Quick start with pi
 
 [pi-mmx](adapters/pi/README.md) is a pi package: `pi install npm:pi-mmx`
-(needs `mmx` 0.4+ on PATH). It gives the model `mmx_render` and `mmx_wait`,
-validates `.mmd` edits made by pi's own edit/write tools, adds `/mmx open`
-(starts `mmx serve` and opens the browser), and delivers each cockpit edit to
-pi as the next turn, with a guard against runaway loops.
+(needs `mmx` 0.4+ on PATH). It runs the turn routine without any skill: your
+unanswered turns are added to each prompt, cockpit edits start pi's next turn
+(with a guard against runaway loops), and `.mmd` edits pi makes are validated
+and sent with an automatic note when its run ends unless the model sent them
+with `mmx_render`. It also adds `mmx_note`, `mmx_wait`, `/mmx open` (starts
+`mmx serve` and opens the browser), and ships the `mmx` and `mmx-codemap`
+skills, derived from the ones in this repository.
 
 ## Drawing a codebase
 

@@ -37,7 +37,9 @@ Works with Claude Code, Codex, or any agent that can run a CLI. Runs locally;
 no account, nothing hosted.
 
 Using the [pi](https://pi.dev/) coding agent? `pi install npm:pi-mmx` adds
-mmx tools, `/mmx open`, and delivers your cockpit edits to pi as the next turn.
+mmx tools, `/mmx open`, the mmx and codemap skills, and runs the turn routine
+for pi: your cockpit edits arrive as the next turn and pi's diagram edits are
+sent at the end of its run.
 
 Mapping a codebase? [`adapters/codemap/`](adapters/codemap/SKILL.md) lets an
 agent draw a bounded map of the code (a neighborhood, a path, the impact of a

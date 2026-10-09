@@ -1,6 +1,6 @@
 {
   "name": "pi-mmx",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sketch with pi in the same Mermaid diagram: you edit the picture in the mmx cockpit, pi sees exactly what you changed and answers in the diagram.",
   "license": "MIT",
   "author": "Eastsidegunn",
@@ -24,9 +24,17 @@
   "type": "module",
   "files": [
     "index.ts",
+    "turns.ts",
+    "pending.ts",
     "skills",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/index.test.mjs",
+    "derive-skills": "node scripts/derive-skills.mjs",
+    "check-skills": "node scripts/derive-skills.mjs --check"
+  },
   "pi": {
     "extensions": [
       "./index.ts"
