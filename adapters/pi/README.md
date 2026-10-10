@@ -5,6 +5,10 @@ picture in the [mmx](https://github.com/Eastsidegunn/mmx) cockpit (rename,
 connect, delete, add a note), pi sees exactly what you changed and answers by
 editing the diagram.
 
+![pi-mmx demo: pi draws the diagram, you fix it in the mmx cockpit, pi answers](https://raw.githubusercontent.com/Eastsidegunn/mmx/main/media/pi-mmx-demo.gif)
+
+<sub>Recorded with mmx v0.4.3 (c50a08b) · pi-mmx v0.2.0 · agent replies replayed from a script · [details](https://raw.githubusercontent.com/Eastsidegunn/mmx/main/media/pi-mmx-demo.gif.json)</sub>
+
 ## Install (1 minute)
 
 1. Install `mmx` 0.4.0 or newer so that `mmx --version` works in a fresh
