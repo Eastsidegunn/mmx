@@ -10,6 +10,8 @@ ve exactamente qué cambiaste y te responde en la imagen.
 
 ![Demo de mmx: una persona edita el diagrama y el agente responde](media/demo.gif)
 
+<sub>Recorded with mmx v0.4.3 (c50a08b) · [details](media/demo.gif.json)</sub>
+
 [![CI](https://github.com/Eastsidegunn/mmx/actions/workflows/ci.yml/badge.svg)](https://github.com/Eastsidegunn/mmx/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/mmx.svg)](https://crates.io/crates/mmx)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
