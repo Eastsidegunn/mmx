@@ -1,0 +1,32 @@
+{
+  "file": "pi-mmx-demo.gif",
+  "sha256": "3657097e290cc59d896e7a36ac7a37b53d89a4c6501c639c3862efeb344cd1f8",
+  "bytes": 1478405,
+  "width": 1280,
+  "height": 720,
+  "durationSec": 30.01,
+  "recordedAt": "2026-10-10T11:35:58.504Z",
+  "mmx": {
+    "version": "0.4.3",
+    "tag": "v0.4.3",
+    "commit": "c50a08b"
+  },
+  "piMmx": {
+    "version": "0.2.0"
+  },
+  "conti": {
+    "channel": "readme",
+    "version": "v1"
+  },
+  "replay": true,
+  "replayedScenes": [
+    "draw",
+    "answer"
+  ],
+  "screenTexts": [
+    "pi install npm:pi-mmx",
+    "Eastsidegunn/mmx",
+    "curl -LsSf https://github.com/Eastsidegunn/mmx/releases/latest/download/mmx-installer.sh | sh"
+  ],
+  "run": "20261010T113558Z-pi-mmx-readme"
+}
