@@ -1,0 +1,25 @@
+{
+  "file": "demo.gif",
+  "sha256": "d94a95d412dfd351f1588e7c6207a9b7d91e57c37cd12251a481bd583df6bc9f",
+  "bytes": 1482619,
+  "width": 1280,
+  "height": 720,
+  "durationSec": 30.01,
+  "recordedAt": "2026-10-10T10:11:36.137Z",
+  "mmx": {
+    "version": "0.4.3",
+    "tag": "v0.4.3",
+    "commit": "c50a08b"
+  },
+  "conti": {
+    "channel": "readme",
+    "version": "v2"
+  },
+  "screenTexts": [
+    "curl -LsSf https://github.com/Eastsidegunn/mmx/releases/latest/download/mmx-installer.sh | sh",
+    "cargo install mmx",
+    "Eastsidegunn/mmx",
+    "Local. No account."
+  ],
+  "run": "20261010T101136Z-mmx-readme"
+}
